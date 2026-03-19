@@ -1,27 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
-import fs from 'fs';
-import path from 'path';
 import { randomUUID } from 'crypto';
-
-interface User {
-  id: string;
-  name: string;
-  email: string;
-  password: string;
-  isAdmin: boolean;
-  forcePasswordChange: boolean;
-  firstLoginAt: string | null;
-  createdAt: string;
-}
-
-const FILE = path.join(process.cwd(), 'data', 'users.json');
-const load = (): User[] => JSON.parse(fs.readFileSync(FILE, 'utf-8'));
-const save = (u: User[]) => fs.writeFileSync(FILE, JSON.stringify(u, null, 2));
+import { loadUsers, saveUsers, User } from '@/lib/userData';
 
 // GET — list all users (admin only — caller must verify on client)
 export async function GET() {
-  const users = load().map(({ password: _p, ...u }) => u);
+  const users = loadUsers().map(({ password: _p, ...u }) => u);
   return NextResponse.json(users);
 }
 
@@ -32,7 +16,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing fields' }, { status: 400 });
   }
 
-  const users = load();
+  const users = loadUsers();
   if (users.find(u => u.email.toLowerCase() === email.toLowerCase())) {
     return NextResponse.json({ error: 'Email already exists' }, { status: 409 });
   }
@@ -49,7 +33,7 @@ export async function POST(req: NextRequest) {
     createdAt: new Date().toISOString(),
   };
   users.push(user);
-  save(users);
+  saveUsers(users);
 
   const { password: _p, ...safe } = user;
   return NextResponse.json(safe, { status: 201 });

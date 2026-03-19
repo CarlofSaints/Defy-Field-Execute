@@ -1,28 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
-import fs from 'fs';
-import path from 'path';
-
-interface User {
-  id: string;
-  name: string;
-  email: string;
-  password: string;
-  isAdmin: boolean;
-  forcePasswordChange: boolean;
-  firstLoginAt: string | null;
-  createdAt: string;
-}
-
-function loadUsers(): User[] {
-  const file = path.join(process.cwd(), 'data', 'users.json');
-  return JSON.parse(fs.readFileSync(file, 'utf-8'));
-}
-
-function saveUsers(users: User[]) {
-  const file = path.join(process.cwd(), 'data', 'users.json');
-  fs.writeFileSync(file, JSON.stringify(users, null, 2));
-}
+import { loadUsers, saveUsers } from '@/lib/userData';
 
 export async function POST(req: NextRequest) {
   const { email, password } = await req.json();
