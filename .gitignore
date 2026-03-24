@@ -34,8 +34,8 @@ yarn-error.log*
 .env*
 !.env.local.example
 
-# data (contains user passwords)
-/data/
+# data/users.json contains hashed passwords — keep out of git
+/data/users.json
 
 # vercel
 .vercel

@@ -17,16 +17,16 @@ export default function Header({ session, onLogout }: HeaderProps) {
   return (
     <>
       <header className="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-30">
-        <div className="max-w-screen-xl mx-auto px-4 h-16 flex items-center justify-between gap-4">
+        <div className="max-w-screen-xl mx-auto px-4 h-[72px] flex items-center justify-between gap-4">
           {/* Left: Defy logo + title */}
-          <div className="flex items-center gap-3 min-w-0">
+          <div className="flex items-center gap-3 min-w-0 overflow-hidden">
             {!defyErr ? (
               <Image
                 src="/defy-logo.png"
                 alt="Defy"
                 width={80}
-                height={32}
-                className="object-contain"
+                height={40}
+                className="object-contain shrink-0 max-h-10"
                 onError={() => setDefyErr(true)}
               />
             ) : (
@@ -44,8 +44,8 @@ export default function Header({ session, onLogout }: HeaderProps) {
               <Image
                 src="/atomic-logo.png"
                 alt="Atomic Marketing"
-                width={100}
-                height={28}
+                width={138}
+                height={39}
                 className="object-contain hidden sm:block"
                 onError={() => setAtomicErr(true)}
               />
@@ -61,12 +61,20 @@ export default function Header({ session, onLogout }: HeaderProps) {
             </div>
 
             {session.isAdmin && (
-              <Link
-                href="/admin/users"
-                className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded font-medium transition-colors"
-              >
-                Users
-              </Link>
+              <>
+                <Link
+                  href="/admin/users"
+                  className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded font-medium transition-colors"
+                >
+                  Users
+                </Link>
+                <Link
+                  href="/admin/reports"
+                  className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded font-medium transition-colors"
+                >
+                  Reports
+                </Link>
+              </>
             )}
 
             <button
