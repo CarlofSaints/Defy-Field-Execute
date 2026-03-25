@@ -2,6 +2,7 @@ import ExcelJS from 'exceljs';
 import * as XLSX from 'xlsx';
 import path from 'path';
 import fs from 'fs';
+import type { StoreMapEntry } from '@/lib/storeMapData';
 
 // ─── Category mapping ───────────────────────────────────────────────────────
 // Maps the category header in the Perigee raw export to subCat + cat values
@@ -106,11 +107,34 @@ function applyDataStyle(cell: ExcelJS.Cell, isEven = false) {
   };
 }
 
+// ─── Province lookup helper ───────────────────────────────────────────────────
+function lookupProvince(storeCode: string, storeName: string, storeMap: StoreMapEntry[]): string {
+  if (storeCode) {
+    const e = storeMap.find(x => x.storeCode.toUpperCase() === storeCode.toUpperCase());
+    if (e) return e.province;
+  }
+  if (storeName) {
+    const e = storeMap.find(x => x.storeName.toUpperCase() === storeName.toUpperCase());
+    if (e) return e.province;
+  }
+  return '';
+}
+
+// ─── Perigee DD/MM/YYYY → Date ───────────────────────────────────────────────
+function perigeeToDate(dateStr: string): Date {
+  const parts = String(dateStr).split('/');
+  if (parts.length !== 3) return new Date(0);
+  const [d, m, y] = parts.map(Number);
+  return new Date(y, m - 1, d);
+}
+
 // ─── Main export ─────────────────────────────────────────────────────────────
 export async function generateMakroStockCount(
   fileBuffer: Buffer,
   brand: string,
-): Promise<{ buffer: Buffer; filename: string }> {
+  storeMap: StoreMapEntry[] = [],
+  retailer = 'MAKRO',
+): Promise<{ buffer: Buffer; filename: string; rawDates: string[]; weekLabel: string }> {
 
   // ── 1. Parse raw Perigee Excel ─────────────────────────────────────────────
   const inputWb = XLSX.read(fileBuffer, { type: 'buffer' });
@@ -120,7 +144,30 @@ export async function generateMakroStockCount(
   if (rawData.length < 2) throw new Error('No data rows found in uploaded file.');
 
   const headers = rawData[0] as (string | null)[];
-  const dataRows = rawData.slice(1);
+  const rawRows = rawData.slice(1);
+
+  // ── Deduplicate: same store → keep most recent submission by DATE (col J = index 9) ──
+  // Some reps fill in the form multiple times for the same store in the same period.
+  const storeLatest = new Map<string, { row: typeof rawRows[0]; dateMs: number }>();
+  for (const row of rawRows) {
+    const storeCode = String(row[7] ?? '').trim();
+    const storeName = String(row[6] ?? '').trim();
+    const key = storeCode || storeName;
+    if (!key) continue;
+    const dateMs = perigeeToDate(String(row[9] ?? '')).getTime();
+    if (!storeLatest.has(key) || dateMs > storeLatest.get(key)!.dateMs) {
+      storeLatest.set(key, { row, dateMs });
+    }
+  }
+  const dataRows = [...storeLatest.values()].map(v => v.row);
+
+  if (dataRows.length === 0) {
+    throw new Error(
+      'No data rows found with a valid Store Name or Store Code. ' +
+      'Columns G (Store) and H (Store Code) appear to be blank in all rows — ' +
+      'check that reps have completed their store details before submitting.'
+    );
+  }
 
   // ── 2. Build category column map ──────────────────────────────────────────
   // Find where each category section starts; stop at CRITICAL LINES
@@ -192,6 +239,14 @@ export async function generateMakroStockCount(
     sohCols.push({ colIdx: i, header: h, productCode, subCat, cat, onFloorIdx, reasonIdx });
   }
 
+  if (sohCols.length === 0) {
+    throw new Error(
+      'No product SOH columns found in the uploaded file. ' +
+      'Expected column headers containing "SOH" (e.g. "DBO489E 50cm Built-In Oven SOH"). ' +
+      'Check that you have uploaded the correct Perigee raw export for this report.'
+    );
+  }
+
   // ── 4. Build vertical database ────────────────────────────────────────────
   const db: DatabaseRow[] = [];
   const dates: string[] = [];
@@ -202,8 +257,10 @@ export async function generateMakroStockCount(
     const repName  = [repFirst, repLast].filter(Boolean).join(' ') || 'UNKNOWN';
     const storeName = String(row[6] ?? '').trim() || 'UNKNOWN';
     const storeCode = String(row[7] ?? '').trim();
-    const province  = String(row[8] ?? '').trim();
     const dateStr   = String(row[9] ?? '').trim();
+    // Province: look up from control file first; fall back to raw col 8 if present
+    const rawProvince = String(row[8] ?? '').trim();
+    const province = lookupProvince(storeCode, storeName, storeMap) || rawProvince || 'UNKNOWN';
 
     if (dateStr && dateStr.includes('/')) dates.push(dateStr);
 
@@ -230,7 +287,7 @@ export async function generateMakroStockCount(
         date:          dateStr,
         subCategory:   col.subCat,
         productCode:   col.productCode,
-        product:       col.header,
+        product:       col.header.replace(/\s+SOH\s*$/i, '').trim(),
         soh:           sohNum,
         onFloor,
         reason,
@@ -253,17 +310,46 @@ export async function generateMakroStockCount(
   }
 
   const weekLabel = `WK${String(reportWeek).padStart(2, '0')}`;
-  const filename  = `${brand.toUpperCase()}_MAKRO_STOCK_COUNT_${weekLabel}_${reportYear}.xlsx`;
+  const retailerSlug = retailer.toUpperCase().replace(/\s+/g, '_');
+  const filename  = `${brand.toUpperCase()}_${retailerSlug}_STOCK_COUNT_${weekLabel}_${reportYear}.xlsx`;
 
   // ── 6. Build output Excel ─────────────────────────────────────────────────
-  const buf = await buildOutputExcel(db, brand, weekLabel, reportYear);
-  return { buffer: buf, filename };
+  const buf = await buildOutputExcel(db, brand, retailer, weekLabel, reportYear);
+  return { buffer: buf, filename, rawDates: dates, weekLabel };
+}
+
+// ─── Internal hyperlink helper ───────────────────────────────────────────────
+// Wraps sheet names with spaces in single quotes as Excel requires
+function sheetHref(sheetName: string, cell = 'A1') {
+  const safe = sheetName.includes(' ') ? `'${sheetName}'` : sheetName;
+  return `#${safe}!${cell}`;
+}
+
+// ─── Nav row (replaces the full banner on data sheets) ────────────────────────
+// Row 1: slim red bar — sheet title left, "← MENU" hyperlink right
+function addNavRow(ws: ExcelJS.Worksheet, sheetTitle: string, colCount: number) {
+  const row = ws.getRow(1);
+  row.height = 22;
+  for (let c = 1; c <= colCount; c++) {
+    const cell = row.getCell(c);
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: DEFY_RED } };
+  }
+  const title = row.getCell(1);
+  title.value = sheetTitle;
+  title.font  = { bold: true, color: { argb: WHITE }, size: 10, name: 'Arial' };
+  title.alignment = { vertical: 'middle', horizontal: 'left' };
+
+  const menuCell = row.getCell(colCount);
+  menuCell.value = { text: '⬅  MENU', hyperlink: sheetHref('MENU'), tooltip: 'Return to Menu' };
+  menuCell.font  = { bold: true, color: { argb: WHITE }, size: 10, name: 'Arial', underline: true };
+  menuCell.alignment = { vertical: 'middle', horizontal: 'right' };
 }
 
 // ─── Excel builder ────────────────────────────────────────────────────────────
 async function buildOutputExcel(
   db: DatabaseRow[],
   brand: string,
+  retailer: string,
   weekLabel: string,
   year: number,
 ): Promise<Buffer> {
@@ -272,7 +358,12 @@ async function buildOutputExcel(
   wb.creator = 'Defy Field Execute';
   wb.created = new Date();
 
-  // Load logos (graceful fallback if missing)
+  // ── Load logos with correct aspect ratios ──────────────────────────────────
+  // Actual dimensions verified from file headers:
+  //   defy-logo.png    224×224  (square,   ratio 1.00)
+  //   atomic-logo.png 1024×216  (wide,     ratio 4.74)
+  //   perigee-logo.jpg 4151×4208 (square,  ratio 0.99)
+  // Display sizes are 50% larger than previous values, maintaining true ratios.
   const pub = path.join(process.cwd(), 'public');
   let defyLogoId:    number | null = null;
   let atomicLogoId:  number | null = null;
@@ -291,115 +382,267 @@ async function buildOutputExcel(
     perigeeLogoId = wb.addImage({ buffer: fs.readFileSync(path.join(pub, 'perigee-logo.jpg')) as any, extension: 'jpeg' });
   } catch { /* logo unavailable */ }
 
-  const reportTitle = `${brand.toUpperCase()}  |  MAKRO STOCK COUNT  |  ${weekLabel} ${year}`;
-
-  // Adds a red logo/title banner as row 1, returns the column count used
-  function addBannerRow(ws: ExcelJS.Worksheet, colCount: number) {
-    ws.getRow(1).height = 48;
-
-    // Fill entire banner row red
-    for (let c = 1; c <= colCount; c++) {
-      const cell = ws.getRow(1).getCell(c);
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: DEFY_RED } };
-      cell.border = {
-        top:    { style: 'thin', color: { argb: DEFY_RED } },
-        bottom: { style: 'thin', color: { argb: DEFY_RED } },
-        left:   { style: 'thin', color: { argb: DEFY_RED } },
-        right:  { style: 'thin', color: { argb: DEFY_RED } },
-      };
-    }
-
-    // Title text
-    const titleCell = ws.getRow(1).getCell(2);
-    titleCell.value = reportTitle;
-    titleCell.font  = { bold: true, color: { argb: WHITE }, size: 13, name: 'Arial' };
-    titleCell.alignment = { vertical: 'middle', horizontal: 'left' };
-
-    // Logos
-    if (defyLogoId !== null) {
-      ws.addImage(defyLogoId, { tl: { col: 0, row: 0 }, ext: { width: 80, height: 40 } });
-    }
-    if (atomicLogoId !== null) {
-      ws.addImage(atomicLogoId, { tl: { col: colCount - 2, row: 0 }, ext: { width: 138, height: 39 } });
-    }
-    if (perigeeLogoId !== null) {
-      ws.addImage(perigeeLogoId, { tl: { col: colCount - 1, row: 0 }, ext: { width: 80, height: 24 } });
-    }
-  }
-
   const zeroRows = db.filter(r => r.soh === 0);
 
-  // ── Sheet 1: DATABASE ─────────────────────────────────────────────────────
+  // ── Sheet definitions (order matches example report) ─────────────────────
+  const SHEET_DEFS = [
+    { name: 'CRITICAL LINE OOS', desc: 'Critical products with zero stock (OOS)' },
+    { name: 'INSIGHTS',          desc: 'SOH by category · Store OOS % · Product OOS %' },
+    { name: 'SUMMARY',           desc: 'Product × store SOH pivot · use ▼ CATEGORY / SUB CAT filters to slice by product type' },
+    { name: 'DETAIL',            desc: 'All products across all visits · use ▼ filters to slice by Province, Category, etc.' },
+    { name: 'ZERO SOH',          desc: 'Out-of-stock lines only (SOH = 0) · filterable' },
+    { name: 'DATABASE',          desc: 'Full vertical database — all visits, all products · filterable' },
+  ];
+
+  // ── MENU sheet (first sheet) ───────────────────────────────────────────────
   {
-    const ws = wb.addWorksheet('DATABASE');
-    ws.views = [{ state: 'frozen', xSplit: 0, ySplit: 3, topLeftCell: 'A4' }];
+    const ws = wb.addWorksheet('MENU');
+    ws.views = [{ showGridLines: false }];
+
+    // Banner row — tall, red, with all three logos
+    const BANNER_H = 90;
+    ws.getRow(1).height = BANNER_H;
+    for (let c = 1; c <= 3; c++) {
+      const cell = ws.getRow(1).getCell(c);
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: DEFY_RED } };
+    }
+
+    // Logos: Defy (left, square 75×75), Atomic (centre-right, 190×40), Perigee (right, square 70×70)
+    if (defyLogoId !== null) {
+      ws.addImage(defyLogoId,    { tl: { col: 0, row: 0 }, ext: { width: 75,  height: 75  } });
+    }
+    if (atomicLogoId !== null) {
+      ws.addImage(atomicLogoId,  { tl: { col: 1, row: 0 }, ext: { width: 190, height: 40  } });
+    }
+    if (perigeeLogoId !== null) {
+      ws.addImage(perigeeLogoId, { tl: { col: 2, row: 0 }, ext: { width: 70,  height: 70  } });
+    }
+
+    // Row 2: blank spacer
+    ws.getRow(2).height = 12;
+
+    // Row 3: Report title
+    ws.getRow(3).height = 42;
+    const titleCell = ws.getRow(3).getCell(1);
+    titleCell.value = `${brand.toUpperCase()} — ${retailer.toUpperCase()} STOCK COUNT`;
+    titleCell.font  = { bold: true, color: { argb: DEFY_RED }, size: 18, name: 'Arial' };
+    titleCell.alignment = { vertical: 'middle', horizontal: 'left' };
+    ws.mergeCells(3, 1, 3, 3);
+
+    // Row 4: Week/date subtitle
+    ws.getRow(4).height = 22;
+    const subCell = ws.getRow(4).getCell(1);
+    const genDate = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
+    subCell.value = `${weekLabel} · ${year}  ·  Generated: ${genDate}`;
+    subCell.font  = { color: { argb: '666666' }, size: 11, name: 'Arial' };
+    subCell.alignment = { vertical: 'middle', horizontal: 'left' };
+    ws.mergeCells(4, 1, 4, 3);
+
+    // Row 5: spacer
+    ws.getRow(5).height = 12;
+
+    // Row 6: Section header
+    ws.getRow(6).height = 26;
+    const idxHeader = ws.getRow(6).getCell(1);
+    idxHeader.value = 'REPORT INDEX';
+    idxHeader.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: DEFY_RED } };
+    idxHeader.font  = { bold: true, color: { argb: WHITE }, size: 11, name: 'Arial' };
+    idxHeader.alignment = { vertical: 'middle', horizontal: 'left' };
+    ws.mergeCells(6, 1, 6, 3);
+
+    // Row 7: Column headers
+    ws.getRow(7).height = 22;
+    ['#', 'SHEET', 'DESCRIPTION'].forEach((h, i) => {
+      const cell = ws.getRow(7).getCell(i + 1);
+      cell.value = h;
+      cell.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: '2D2D2D' } };
+      cell.font  = { bold: true, color: { argb: WHITE }, size: 10, name: 'Arial' };
+      cell.alignment = { vertical: 'middle', horizontal: i === 0 ? 'center' : 'left' };
+    });
+
+    // Rows 8+: one row per sheet
+    SHEET_DEFS.forEach(({ name, desc }, idx) => {
+      const rowNum = 8 + idx;
+      ws.getRow(rowNum).height = 22;
+      const isEven = idx % 2 === 0;
+      const bg = isEven ? 'F7F7F7' : WHITE;
+
+      // # column
+      const numCell = ws.getRow(rowNum).getCell(1);
+      numCell.value = idx + 1;
+      numCell.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+      numCell.font  = { bold: true, color: { argb: DEFY_RED }, size: 10, name: 'Arial' };
+      numCell.alignment = { vertical: 'middle', horizontal: 'center' };
+      numCell.border = {
+        bottom: { style: 'thin', color: { argb: 'E0E0E0' } },
+        right:  { style: 'thin', color: { argb: 'E0E0E0' } },
+      };
+
+      // Sheet name — hyperlink
+      const nameCell = ws.getRow(rowNum).getCell(2);
+      nameCell.value = { text: name, hyperlink: sheetHref(name), tooltip: `Go to ${name}` };
+      nameCell.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+      nameCell.font  = { bold: true, color: { argb: '0563C1' }, size: 10, name: 'Arial', underline: true };
+      nameCell.alignment = { vertical: 'middle', horizontal: 'left' };
+      nameCell.border = {
+        bottom: { style: 'thin', color: { argb: 'E0E0E0' } },
+        right:  { style: 'thin', color: { argb: 'E0E0E0' } },
+      };
+
+      // Description
+      const descCell = ws.getRow(rowNum).getCell(3);
+      descCell.value = desc;
+      descCell.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+      descCell.font  = { color: { argb: '444444' }, size: 10, name: 'Arial' };
+      descCell.alignment = { vertical: 'middle', horizontal: 'left' };
+      descCell.border = {
+        bottom: { style: 'thin', color: { argb: 'E0E0E0' } },
+      };
+    });
+
+    // Filter note row
+    const noteRow = 8 + SHEET_DEFS.length + 1;
+    ws.getRow(noteRow).height = 30;
+    const noteCell = ws.getRow(noteRow).getCell(1);
+    noteCell.value = '💡  Tip: On SUMMARY use ▼ CATEGORY / SUB CAT filters to slice the pivot by product type. On DETAIL, ZERO SOH and DATABASE use ▼ filters to filter by Province, Category, Store and more.';
+    noteCell.font  = { italic: true, color: { argb: '888888' }, size: 9, name: 'Arial' };
+    noteCell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
+    ws.mergeCells(noteRow, 1, noteRow, 3);
+
+    // Column widths
+    ws.getColumn(1).width = 5;
+    ws.getColumn(2).width = 28;
+    ws.getColumn(3).width = 68;
+  }
+
+  // ── Helper: data sheet nav row (no logos — just slim red bar) ─────────────
+  // Already defined above as addNavRow(ws, sheetTitle, colCount)
+
+  // ── CRITICAL LINE OOS ─────────────────────────────────────────────────────
+  // Flat filterable table: PROVINCE | STORE NAME | STORE CODE | REP NAME | DATE
+  //   | PRODUCT CODE | PRODUCT | CATEGORY | SUB CAT | SOH
+  {
+    const ws = wb.addWorksheet('CRITICAL LINE OOS');
+    ws.views = [{ state: 'frozen', xSplit: 0, ySplit: 2, topLeftCell: 'A3', showGridLines: false }];
+
+    const critOOS = zeroRows
+      .filter(r => r.criticalLines === 'YES')
+      .sort((a, b) => {
+        if (a.province  !== b.province)  return a.province.localeCompare(b.province);
+        if (a.storeName !== b.storeName) return a.storeName.localeCompare(b.storeName);
+        return a.product.localeCompare(b.product);
+      });
 
     const cols = [
-      'WEEK','STORE NAME','STORE CODE','REP NAME','DATE',
-      'SUB CATEGORY','PRODUCT CODE','PRODUCT','SOH',
-      'ON FLOOR','REASON','PROVINCE','CATEGORY','KEY CAT','CRITICAL LINES',
+      'PROVINCE', 'STORE NAME', 'STORE CODE', 'REP NAME', 'DATE',
+      'PRODUCT CODE', 'PRODUCT', 'CATEGORY', 'SUB CAT', 'SOH',
     ];
-    addBannerRow(ws, cols.length);
-    ws.mergeCells(1, 1, 1, cols.length);
-    ws.addRow([]); // blank spacer
+
+    addNavRow(ws, 'CRITICAL LINE OOS', cols.length);
 
     const hRow = ws.addRow(cols);
-    hRow.height = 30;
+    hRow.height = 28;
     hRow.eachCell(cell => applyHeaderStyle(cell));
 
-    db.forEach((row, i) => {
+    ws.autoFilter = { from: { row: 2, column: 1 }, to: { row: 2, column: cols.length } };
+
+    critOOS.forEach((row, i) => {
       const r = ws.addRow([
-        row.week, row.storeName, row.storeCode, row.repName, row.date,
-        row.subCategory, row.productCode, row.product, row.soh,
-        row.onFloor, row.reason, row.province, row.category, row.keyCat, row.criticalLines,
+        row.province, row.storeName, row.storeCode, row.repName, row.date,
+        row.productCode, row.product, row.category, row.subCategory, row.soh,
       ]);
       r.eachCell(cell => applyDataStyle(cell, i % 2 === 1));
     });
 
-    [10,28,12,22,12,18,14,52,8,10,32,15,15,15,14]
+    [15, 30, 12, 22, 12, 14, 52, 15, 15, 8]
       .forEach((w, i) => { ws.getColumn(i + 1).width = w; });
   }
 
-  // ── Sheet 2: DETAIL ───────────────────────────────────────────────────────
-  const detailCols = [
-    'STORE NAME','SUB CATEGORY','PRODUCT CODE','PRODUCT','SOH',
-    'PROVINCE','CATEGORY','KEY CAT','CRITICAL LINES',
-  ];
-  const buildDetailSheet = (ws: ExcelJS.Worksheet, rows: DatabaseRow[]) => {
-    ws.views = [{ state: 'frozen', xSplit: 0, ySplit: 3, topLeftCell: 'A4' }];
-    addBannerRow(ws, detailCols.length);
-    ws.mergeCells(1, 1, 1, detailCols.length);
-    ws.addRow([]);
+  // ── INSIGHTS ──────────────────────────────────────────────────────────────
+  {
+    const ws = wb.addWorksheet('INSIGHTS');
+    ws.views = [{ state: 'frozen', xSplit: 0, ySplit: 2, topLeftCell: 'A3', showGridLines: false }];
 
-    const hRow = ws.addRow(detailCols);
-    hRow.height = 30;
-    hRow.eachCell(cell => applyHeaderStyle(cell));
+    addNavRow(ws, 'INSIGHTS', 9);
 
-    rows.forEach((row, i) => {
-      const r = ws.addRow([
-        row.storeName, row.subCategory, row.productCode, row.product,
-        row.soh, row.province, row.category, row.keyCat, row.criticalLines,
-      ]);
-      r.eachCell(cell => applyDataStyle(cell, i % 2 === 1));
+    const hRow = ws.addRow([
+      'CATEGORY', 'TOTAL SOH', 'SOH %', '',
+      'STORE NAME', 'OOS CONT %', '',
+      'PRODUCT CODE', 'OOS CONT %',
+    ]);
+    hRow.height = 28;
+    hRow.eachCell((cell, c) => {
+      if (c === 4 || c === 7) return;
+      applyHeaderStyle(cell);
     });
 
-    [28,18,14,52,8,15,15,15,14]
+    const catTotals = new Map<string, number>();
+    for (const row of db) catTotals.set(row.subCategory, (catTotals.get(row.subCategory) ?? 0) + row.soh);
+    const totalSoh = [...catTotals.values()].reduce((a, b) => a + b, 0);
+    const sortedCats = [...catTotals.entries()].sort((a, b) => b[1] - a[1]);
+
+    const storeOOS = new Map<string, number>();
+    for (const row of zeroRows) storeOOS.set(row.storeName, (storeOOS.get(row.storeName) ?? 0) + 1);
+    const totalOOS = zeroRows.length;
+    const sortedStoreOOS = [...storeOOS.entries()].sort((a, b) => b[1] - a[1]);
+
+    const prodOOS = new Map<string, number>();
+    for (const row of zeroRows) prodOOS.set(row.productCode, (prodOOS.get(row.productCode) ?? 0) + 1);
+    const sortedProdOOS = [...prodOOS.entries()].sort((a, b) => b[1] - a[1]);
+
+    const maxR = Math.max(sortedCats.length + 1, sortedStoreOOS.length, sortedProdOOS.length);
+    for (let i = 0; i < maxR; i++) {
+      const vals: (string | number | null)[] = [null, null, null, null, null, null, null, null, null];
+      if (i < sortedCats.length) {
+        vals[0] = sortedCats[i][0];
+        vals[1] = sortedCats[i][1];
+        vals[2] = totalSoh > 0 ? sortedCats[i][1] / totalSoh : 0;
+      } else if (i === sortedCats.length) {
+        vals[0] = 'Grand Total'; vals[1] = totalSoh; vals[2] = 1;
+      }
+      if (i < sortedStoreOOS.length) {
+        vals[4] = sortedStoreOOS[i][0];
+        vals[5] = totalOOS > 0 ? sortedStoreOOS[i][1] / totalOOS : 0;
+      }
+      if (i < sortedProdOOS.length) {
+        vals[7] = sortedProdOOS[i][0];
+        vals[8] = totalOOS > 0 ? sortedProdOOS[i][1] / totalOOS : 0;
+      }
+      const r = ws.addRow(vals);
+      r.eachCell(cell => applyDataStyle(cell, i % 2 === 1));
+      if (vals[2] !== null) r.getCell(3).numFmt = '0.00%';
+      if (vals[5] !== null) r.getCell(6).numFmt = '0.00%';
+      if (vals[8] !== null) r.getCell(9).numFmt = '0.00%';
+      if (i === sortedCats.length) {
+        [1, 2, 3].forEach(c => { r.getCell(c).font = { bold: true, size: 10, name: 'Arial' }; });
+      }
+    }
+    [22, 12, 12, 3, 32, 14, 3, 20, 14]
       .forEach((w, i) => { ws.getColumn(i + 1).width = w; });
-  };
+  }
 
-  buildDetailSheet(wb.addWorksheet('DETAIL'), db);
-
-  // ── Sheet 3: ZERO SOH ─────────────────────────────────────────────────────
-  buildDetailSheet(wb.addWorksheet('ZERO SOH'), zeroRows);
-
-  // ── Sheet 4: SUMMARY (Product × Store pivot) ──────────────────────────────
+  // ── SUMMARY (Product × Store pivot) ───────────────────────────────────────
+  // Col layout: CATEGORY | SUB CAT | PRODUCT | [STORE1...N] | TOTAL
+  // AutoFilter on row 5 lets users filter by CATEGORY or SUB CAT to slice the
+  // pivot (e.g. show only FRIDGE rows). Province filtering belongs on DETAIL/DATABASE.
   {
     const ws = wb.addWorksheet('SUMMARY');
 
     const stores   = [...new Set(db.map(r => r.storeName))].sort();
-    const products = [...new Set(db.map(r => r.product))].sort();
+    // Sort products by category then subCat then name for logical grouping
+    const productMeta = new Map<string, { category: string; subCat: string }>();
+    for (const row of db) {
+      if (!productMeta.has(row.product)) {
+        productMeta.set(row.product, { category: row.category, subCat: row.subCategory });
+      }
+    }
+    const products = [...new Set(db.map(r => r.product))].sort((a, b) => {
+      const ma = productMeta.get(a)!; const mb = productMeta.get(b)!;
+      if (ma.category !== mb.category) return ma.category.localeCompare(mb.category);
+      if (ma.subCat !== mb.subCat) return ma.subCat.localeCompare(mb.subCat);
+      return a.localeCompare(b);
+    });
 
-    // Build pivot lookup: product → store → sum SOH
     const pivot = new Map<string, Map<string, number>>();
     for (const row of db) {
       if (!pivot.has(row.product)) pivot.set(row.product, new Map());
@@ -407,30 +650,39 @@ async function buildOutputExcel(
       sm.set(row.storeName, (sm.get(row.storeName) ?? 0) + row.soh);
     }
 
-    const totalCols = stores.length + 2; // product col + store cols + total col
-    addBannerRow(ws, totalCols);
-    ws.mergeCells(1, 1, 1, totalCols);
+    // 3 fixed cols (CATEGORY, SUB CAT, PRODUCT) + N store cols + TOTAL col
+    const totalCols = stores.length + 4;
+    addNavRow(ws, 'SUMMARY', totalCols);
 
-    ws.addRow([]); // blank
+    ws.addRow([]); // blank row 2
     const weekRow = ws.addRow(['WEEK', weekLabel]);
     weekRow.getCell(1).font = { bold: true, size: 10, name: 'Arial' };
     weekRow.getCell(2).font = { bold: true, color: { argb: DEFY_RED }, size: 10, name: 'Arial' };
-    ws.addRow([]); // blank
+    ws.addRow([]); // blank row 4
 
-    // Header row with rotated store names
-    const hRow = ws.addRow(['PRODUCT', ...stores, 'TOTAL']);
+    // Header row with rotated store names (row 5)
+    const hRow = ws.addRow(['CATEGORY', 'SUB CAT', 'PRODUCT', ...stores, 'TOTAL']);
     hRow.height = 150;
     hRow.eachCell(cell => {
       applyHeaderStyle(cell);
       cell.alignment = { vertical: 'bottom', horizontal: 'center', textRotation: 90, wrapText: false };
     });
-    hRow.getCell(1).alignment          = { vertical: 'middle', horizontal: 'left' };
-    hRow.getCell(stores.length + 2).alignment = { vertical: 'middle', horizontal: 'center' };
+    // CATEGORY, SUB CAT, PRODUCT headers — left-aligned, not rotated
+    [1, 2, 3].forEach(c => {
+      hRow.getCell(c).alignment = { vertical: 'middle', horizontal: 'left' };
+    });
+    hRow.getCell(stores.length + 4).alignment = { vertical: 'middle', horizontal: 'center' };
 
-    // Product rows
+    // AutoFilter on row 5: users can filter CATEGORY or SUB CAT to slice the pivot
+    ws.autoFilter = { from: { row: 5, column: 1 }, to: { row: 5, column: totalCols } };
+
+    // Freeze first 3 cols + rows 1-5
+    ws.views = [{ state: 'frozen', xSplit: 3, ySplit: 5, topLeftCell: 'D6', showGridLines: false }];
+
     products.forEach((product, i) => {
+      const meta = productMeta.get(product)!;
       const storeMap = pivot.get(product) ?? new Map();
-      const vals: (string | number)[] = [product];
+      const vals: (string | number)[] = [meta.category, meta.subCat, product];
       let total = 0;
       for (const store of stores) {
         const soh = storeMap.get(store) ?? null;
@@ -438,29 +690,26 @@ async function buildOutputExcel(
         if (soh !== null) total += soh;
       }
       vals.push(total);
-
       const r = ws.addRow(vals);
       r.eachCell(cell => applyDataStyle(cell, i % 2 === 1));
-
-      // Highlight zero SOH red
-      for (let c = 2; c <= stores.length + 1; c++) {
+      // Highlight zero SOH cells (store columns only — cols 4 to stores.length+3)
+      for (let c = 4; c <= stores.length + 3; c++) {
         const cell = r.getCell(c);
         if (cell.value === 0) {
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFCCCC' } };
           cell.font = { color: { argb: DEFY_RED }, bold: true, size: 10, name: 'Arial' };
         }
       }
-      r.getCell(stores.length + 2).font = { bold: true, size: 10, name: 'Arial' };
+      r.getCell(stores.length + 4).font = { bold: true, size: 10, name: 'Arial' };
     });
 
-    // Grand total row
-    const gtVals: (string | number)[] = ['GRAND TOTAL'];
+    const gtVals: (string | number)[] = ['GRAND TOTAL', '', ''];
     let gtTotal = 0;
     for (const store of stores) {
-      let storeTotal = 0;
-      for (const sm of pivot.values()) storeTotal += sm.get(store) ?? 0;
-      gtTotal += storeTotal;
-      gtVals.push(storeTotal);
+      let st = 0;
+      for (const sm of pivot.values()) st += sm.get(store) ?? 0;
+      gtTotal += st;
+      gtVals.push(st);
     }
     gtVals.push(gtTotal);
     const gtRow = ws.addRow(gtVals);
@@ -470,163 +719,72 @@ async function buildOutputExcel(
     });
     gtRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'left' };
 
-    ws.getColumn(1).width = 52;
-    for (let c = 2; c <= stores.length + 1; c++) ws.getColumn(c).width = 7.15;
-    ws.getColumn(stores.length + 2).width = 10;
+    ws.getColumn(1).width = 18;  // CATEGORY
+    ws.getColumn(2).width = 18;  // SUB CAT
+    ws.getColumn(3).width = 52;  // PRODUCT
+    for (let c = 4; c <= stores.length + 3; c++) ws.getColumn(c).width = 7.15;
+    ws.getColumn(stores.length + 4).width = 10;
   }
 
-  // ── Sheet 5: INSIGHTS ────────────────────────────────────────────────────
-  {
-    const ws = wb.addWorksheet('INSIGHTS');
-    ws.views = [{ state: 'frozen', xSplit: 0, ySplit: 3, topLeftCell: 'A4' }];
+  // ── DETAIL + ZERO SOH shared builder ──────────────────────────────────────
+  const detailCols = [
+    'STORE NAME','SUB CATEGORY','PRODUCT CODE','PRODUCT','SOH',
+    'PROVINCE','CATEGORY','KEY CAT','CRITICAL LINES',
+  ];
+  const buildDetailSheet = (ws: ExcelJS.Worksheet, title: string, rows: DatabaseRow[]) => {
+    ws.views = [{ state: 'frozen', xSplit: 0, ySplit: 2, topLeftCell: 'A3', showGridLines: false }];
+    addNavRow(ws, title, detailCols.length);
 
-    addBannerRow(ws, 9);
-    ws.mergeCells(1, 1, 1, 9);
-    ws.addRow([]);
+    const hRow = ws.addRow(detailCols);
+    hRow.height = 28;
+    hRow.eachCell(cell => applyHeaderStyle(cell));
 
-    const hRow = ws.addRow([
-      'CATEGORY', 'TOTAL SOH', 'SOH %', '',
-      'STORE NAME', 'OOS CONT %', '',
-      'PRODUCT CODE', 'OOS CONT %',
-    ]);
-    hRow.height = 30;
-    hRow.eachCell((cell, c) => {
-      if (c === 4 || c === 7) return; // spacer columns
-      applyHeaderStyle(cell);
-    });
+    // AutoFilter on header row (row 2)
+    ws.autoFilter = { from: { row: 2, column: 1 }, to: { row: 2, column: detailCols.length } };
 
-    // Category totals (by subCategory)
-    const catTotals = new Map<string, number>();
-    for (const row of db) catTotals.set(row.subCategory, (catTotals.get(row.subCategory) ?? 0) + row.soh);
-    const totalSoh = [...catTotals.values()].reduce((a, b) => a + b, 0);
-    const sortedCats = [...catTotals.entries()].sort((a, b) => b[1] - a[1]);
-
-    // Store OOS counts
-    const storeOOS = new Map<string, number>();
-    for (const row of zeroRows) storeOOS.set(row.storeName, (storeOOS.get(row.storeName) ?? 0) + 1);
-    const totalOOS = zeroRows.length;
-    const sortedStoreOOS = [...storeOOS.entries()].sort((a, b) => b[1] - a[1]);
-
-    // Product OOS counts
-    const prodOOS = new Map<string, number>();
-    for (const row of zeroRows) prodOOS.set(row.productCode, (prodOOS.get(row.productCode) ?? 0) + 1);
-    const sortedProdOOS = [...prodOOS.entries()].sort((a, b) => b[1] - a[1]);
-
-    const maxR = Math.max(sortedCats.length + 1, sortedStoreOOS.length, sortedProdOOS.length);
-
-    for (let i = 0; i < maxR; i++) {
-      const vals: (string | number | null)[] = [null, null, null, null, null, null, null, null, null];
-
-      if (i < sortedCats.length) {
-        vals[0] = sortedCats[i][0];
-        vals[1] = sortedCats[i][1];
-        vals[2] = totalSoh > 0 ? sortedCats[i][1] / totalSoh : 0;
-      } else if (i === sortedCats.length) {
-        vals[0] = 'Grand Total';
-        vals[1] = totalSoh;
-        vals[2] = 1;
-      }
-
-      if (i < sortedStoreOOS.length) {
-        vals[4] = sortedStoreOOS[i][0];
-        vals[5] = totalOOS > 0 ? sortedStoreOOS[i][1] / totalOOS : 0;
-      }
-
-      if (i < sortedProdOOS.length) {
-        vals[7] = sortedProdOOS[i][0];
-        vals[8] = totalOOS > 0 ? sortedProdOOS[i][1] / totalOOS : 0;
-      }
-
-      const r = ws.addRow(vals);
+    rows.forEach((row, i) => {
+      const r = ws.addRow([
+        row.storeName, row.subCategory, row.productCode, row.product,
+        row.soh, row.province, row.category, row.keyCat, row.criticalLines,
+      ]);
       r.eachCell(cell => applyDataStyle(cell, i % 2 === 1));
-      if (vals[2] !== null) r.getCell(3).numFmt = '0.00%';
-      if (vals[5] !== null) r.getCell(6).numFmt = '0.00%';
-      if (vals[8] !== null) r.getCell(9).numFmt = '0.00%';
+    });
+    [28, 18, 14, 52, 8, 15, 15, 15, 14]
+      .forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+  };
 
-      // Bold grand total row
-      if (i === sortedCats.length) {
-        r.getCell(1).font = { bold: true, size: 10, name: 'Arial' };
-        r.getCell(2).font = { bold: true, size: 10, name: 'Arial' };
-        r.getCell(3).font = { bold: true, size: 10, name: 'Arial' };
-      }
-    }
+  buildDetailSheet(wb.addWorksheet('DETAIL'),   'DETAIL',   db);
+  buildDetailSheet(wb.addWorksheet('ZERO SOH'), 'ZERO SOH', zeroRows);
 
-    [22, 12, 12, 3, 32, 14, 3, 20, 14]
+  // ── DATABASE ──────────────────────────────────────────────────────────────
+  {
+    const ws = wb.addWorksheet('DATABASE');
+    ws.views = [{ state: 'frozen', xSplit: 0, ySplit: 2, topLeftCell: 'A3', showGridLines: false }];
+
+    const dbCols = [
+      'WEEK','STORE NAME','STORE CODE','REP NAME','DATE',
+      'SUB CATEGORY','PRODUCT CODE','PRODUCT','SOH',
+      'ON FLOOR','REASON','PROVINCE','CATEGORY','KEY CAT','CRITICAL LINES',
+    ];
+    addNavRow(ws, 'DATABASE', dbCols.length);
+
+    const hRow = ws.addRow(dbCols);
+    hRow.height = 28;
+    hRow.eachCell(cell => applyHeaderStyle(cell));
+
+    ws.autoFilter = { from: { row: 2, column: 1 }, to: { row: 2, column: dbCols.length } };
+
+    db.forEach((row, i) => {
+      const r = ws.addRow([
+        row.week, row.storeName, row.storeCode, row.repName, row.date,
+        row.subCategory, row.productCode, row.product, row.soh,
+        row.onFloor, row.reason, row.province, row.category, row.keyCat, row.criticalLines,
+      ]);
+      r.eachCell(cell => applyDataStyle(cell, i % 2 === 1));
+    });
+    [10, 28, 12, 22, 12, 18, 14, 52, 8, 10, 32, 15, 15, 15, 14]
       .forEach((w, i) => { ws.getColumn(i + 1).width = w; });
   }
 
-  // ── Sheet 6: CRITICAL LINE OOS ────────────────────────────────────────────
-  {
-    const ws = wb.addWorksheet('CRITICAL LINE OOS');
-    ws.views = [{ state: 'frozen', xSplit: 0, ySplit: 4, topLeftCell: 'A5' }];
-
-    const critOOS = zeroRows.filter(r => r.criticalLines === 'YES');
-    addBannerRow(ws, 8);
-    ws.mergeCells(1, 1, 1, 8);
-    ws.addRow([]);
-
-    // Section headers
-    const secRow = ws.addRow(['ARTICLE VIEW', null, null, null, 'ARTICLE BY SITE', null, null, null]);
-    [1, 5].forEach(c => {
-      const cell = secRow.getCell(c);
-      applyHeaderStyle(cell);
-      cell.font = { bold: true, color: { argb: WHITE }, size: 11, name: 'Arial' };
-    });
-    secRow.height = 28;
-
-    const subRow = ws.addRow([
-      'PRODUCT', 'SOH', null, null,
-      'STORE NAME', 'PRODUCT CODE', 'SOH', 'OOS CONT %',
-    ]);
-    subRow.height = 28;
-    subRow.eachCell((cell, c) => {
-      if (c === 3 || c === 4) return;
-      applyHeaderStyle(cell);
-    });
-
-    // Article view: product → OOS count
-    const articleView = new Map<string, number>();
-    for (const row of critOOS) articleView.set(row.product, (articleView.get(row.product) ?? 0) + 1);
-    const articleViewArr = [...articleView.entries()].sort((a, b) => b[1] - a[1]);
-
-    const totalCritOOS = critOOS.length;
-    const maxR = Math.max(articleViewArr.length + 1, critOOS.length);
-
-    for (let i = 0; i < maxR; i++) {
-      const vals: (string | number | null)[] = [null, null, null, null, null, null, null, null];
-
-      if (i < articleViewArr.length) {
-        vals[0] = articleViewArr[i][0];
-        vals[1] = articleViewArr[i][1];
-      } else if (i === articleViewArr.length) {
-        vals[0] = 'Grand Total';
-        vals[1] = totalCritOOS;
-      }
-
-      if (i < critOOS.length) {
-        const row = critOOS[i];
-        vals[4] = row.storeName;
-        vals[5] = row.productCode;
-        vals[6] = row.soh;
-        vals[7] = totalCritOOS > 0 ? 1 / totalCritOOS : 0;
-      }
-
-      const r = ws.addRow(vals);
-      r.eachCell(cell => applyDataStyle(cell, i % 2 === 1));
-      if (vals[7] !== null) r.getCell(8).numFmt = '0.00%';
-
-      if (i === articleViewArr.length) {
-        r.getCell(1).font = { bold: true, size: 10, name: 'Arial' };
-        r.getCell(2).font = { bold: true, size: 10, name: 'Arial' };
-      }
-    }
-
-    [52, 10, 3, 3, 32, 18, 10, 14]
-      .forEach((w, i) => { ws.getColumn(i + 1).width = w; });
-  }
-
-  // Write and return
-  const buf = await wb.xlsx.writeBuffer();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return Buffer.from(buf) as any;
+  return Buffer.from(await wb.xlsx.writeBuffer());
 }

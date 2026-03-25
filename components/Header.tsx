@@ -18,8 +18,8 @@ export default function Header({ session, onLogout }: HeaderProps) {
     <>
       <header className="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-30">
         <div className="max-w-screen-xl mx-auto px-4 h-[72px] flex items-center justify-between gap-4">
-          {/* Left: Defy logo + title */}
-          <div className="flex items-center gap-3 min-w-0 overflow-hidden">
+          {/* Left: Defy logo + title — click to return to report builder */}
+          <Link href="/" className="flex items-center gap-3 min-w-0 overflow-hidden hover:opacity-80 transition-opacity">
             {!defyErr ? (
               <Image
                 src="/defy-logo.png"
@@ -36,7 +36,7 @@ export default function Header({ session, onLogout }: HeaderProps) {
               <p className="font-bold text-gray-900 text-sm leading-tight">Field Execute</p>
               <p className="text-xs text-gray-400 leading-tight">Reporting Platform</p>
             </div>
-          </div>
+          </Link>
 
           {/* Right: Atomic logo + user + controls */}
           <div className="flex items-center gap-3 shrink-0">
@@ -72,7 +72,7 @@ export default function Header({ session, onLogout }: HeaderProps) {
                   href="/admin/reports"
                   className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded font-medium transition-colors"
                 >
-                  Reports
+                  Admin Centre
                 </Link>
               </>
             )}

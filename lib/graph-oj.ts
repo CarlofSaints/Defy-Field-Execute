@@ -35,7 +35,7 @@ async function getToken(): Promise<string> {
 async function getSiteId(): Promise<string> {
   const token = await getToken();
   const res = await fetch(
-    `https://graph.microsoft.com/v1.0/sites/${SP_HOST}:/sites/root`,
+    `https://graph.microsoft.com/v1.0/sites/${SP_HOST}:/`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
   if (!res.ok) throw new Error(`getSiteId error: ${await res.text()}`);

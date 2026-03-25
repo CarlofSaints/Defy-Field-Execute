@@ -39,6 +39,7 @@ export default function AdminUsersPage() {
   const [addEmail, setAddEmail] = useState('');
   const [addPw, setAddPw] = useState('');
   const [addAdmin, setAddAdmin] = useState(false);
+  const [addForcePwChange, setAddForcePwChange] = useState(true);
   const [showAddPw, setShowAddPw] = useState(false);
   const [sendWelcome, setSendWelcome] = useState(true);
   const [addLoading, setAddLoading] = useState(false);
@@ -70,7 +71,7 @@ export default function AdminUsersPage() {
       const res = await fetch('/api/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: addName, email: addEmail, password: addPw, isAdmin: addAdmin }),
+        body: JSON.stringify({ name: addName, email: addEmail, password: addPw, isAdmin: addAdmin, forcePasswordChange: addForcePwChange }),
       });
       const data = await res.json();
       if (!res.ok) { notify(data.error || 'Failed to create user', 'error'); return; }
@@ -79,11 +80,11 @@ export default function AdminUsersPage() {
         await fetch(`/api/users/${data.id}/notify`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ plainPassword: addPw, type: 'welcome' }),
+          body: JSON.stringify({ plainPassword: addPw, type: 'welcome', name: addName, email: addEmail }),
         });
       }
       notify(`User ${addName} created${sendWelcome ? ' — welcome email sent' : ''}`);
-      setAddName(''); setAddEmail(''); setAddPw(''); setAddAdmin(false); setSendWelcome(true);
+      setAddName(''); setAddEmail(''); setAddPw(''); setAddAdmin(false); setAddForcePwChange(true); setSendWelcome(true);
       loadUsers();
     } finally {
       setAddLoading(false);
@@ -119,7 +120,7 @@ export default function AdminUsersPage() {
         await fetch(`/api/users/${editUser.id}/notify`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ plainPassword: editPw, type: 'reset' }),
+          body: JSON.stringify({ plainPassword: editPw, type: 'reset', name: editName, email: editEmail }),
         });
       }
       notify(`User updated${editPw && sendReset ? ' — reset email sent' : ''}`);
@@ -140,12 +141,14 @@ export default function AdminUsersPage() {
   if (loading || !session) return null;
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen" style={{ backgroundImage: "url('/defy logo grey.png')", backgroundSize: '160px', backgroundRepeat: 'repeat', backgroundColor: 'rgb(252,252,252)', backgroundBlendMode: 'luminosity' }}>
       <Header session={session} onLogout={logout} />
       {toast && <Toast toast={toast} onClose={() => setToast(null)} />}
 
       <main className="max-w-screen-lg mx-auto px-4 py-8 flex flex-col gap-8">
-        <h1 className="text-xl font-bold text-gray-900">User Management</h1>
+        <div className="bg-white rounded-xl shadow-sm border-l-4 border-[#E31837] px-6 py-4 flex items-center gap-3">
+          <h1 className="text-xl font-bold text-gray-900">User Management</h1>
+        </div>
 
         {/* Add User */}
         <section className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
@@ -177,6 +180,11 @@ export default function AdminUsersPage() {
                 <input type="checkbox" checked={addAdmin} onChange={e => setAddAdmin(e.target.checked)}
                   className="accent-[#E31837]" />
                 Admin user
+              </label>
+              <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                <input type="checkbox" checked={addForcePwChange} onChange={e => setAddForcePwChange(e.target.checked)}
+                  className="accent-[#E31837]" />
+                Force password change on first login
               </label>
               <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
                 <input type="checkbox" checked={sendWelcome} onChange={e => setSendWelcome(e.target.checked)}
@@ -224,10 +232,8 @@ export default function AdminUsersPage() {
                       <div className="flex gap-2 justify-end">
                         <button onClick={() => openEdit(u)}
                           className="text-xs text-blue-600 hover:text-blue-800 font-medium">Edit</button>
-                        {u.id !== session.id && (
-                          <button onClick={() => handleDelete(u)}
-                            className="text-xs text-red-500 hover:text-red-700 font-medium">Delete</button>
-                        )}
+                        <button onClick={() => handleDelete(u)}
+                          className="text-xs text-red-500 hover:text-red-700 font-medium">Delete</button>
                       </div>
                     </td>
                   </tr>

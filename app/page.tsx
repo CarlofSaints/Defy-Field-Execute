@@ -221,14 +221,16 @@ function StepBadge({ n, done }: { n: number; done: boolean }) {
 export default function DashboardPage() {
   const { session, loading, logout } = useAuth();
 
-  const [reports,     setReports]     = useState<ReportDef[]>([]);
-  const [brands,      setBrands]      = useState<string[]>(['Defy']);
-  const [report,      setReport]      = useState<ReportDef | null>(null);
-  const [outputType,  setOutputType]  = useState<string>('Excel');
-  const [file,        setFile]        = useState<File | null>(null);
-  const [generating,  setGenerating]  = useState(false);
-  const [error,       setError]       = useState<string | null>(null);
-  const [success,     setSuccess]     = useState<string | null>(null);
+  const [reports,         setReports]         = useState<ReportDef[]>([]);
+  const [brands,          setBrands]          = useState<string[]>(['Defy']);
+  const [report,          setReport]          = useState<ReportDef | null>(null);
+  const [outputType,      setOutputType]      = useState<string>('Excel');
+  const [file,            setFile]            = useState<File | null>(null);
+  const [sendEmail,       setSendEmail]       = useState(false);
+  const [additionalEmail, setAdditionalEmail] = useState('');
+  const [generating,      setGenerating]      = useState(false);
+  const [error,           setError]           = useState<string | null>(null);
+  const [success,         setSuccess]         = useState<string | null>(null);
 
   const loadReports = useCallback(async () => {
     const res = await fetch('/api/reports');
@@ -267,6 +269,10 @@ export default function DashboardPage() {
     fd.append('brand', brands[0]); // primary brand
     fd.append('reportId', report.id);
     fd.append('outputType', outputType);
+    fd.append('userName',  session?.name  ?? '');
+    fd.append('userEmail', session?.email ?? '');
+    fd.append('sendEmail', sendEmail ? 'true' : 'false');
+    if (sendEmail && additionalEmail) fd.append('additionalEmail', additionalEmail);
 
     try {
       const res = await fetch('/api/generate', { method: 'POST', body: fd });
@@ -390,6 +396,58 @@ export default function DashboardPage() {
             </div>
           </div>
           <DropZone file={file} onChange={setFile} />
+        </div>
+
+        {/* ── Step 5: Delivery ─────────────────────────────────────────────── */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+          <div className="flex items-center gap-3 mb-4">
+            <StepBadge n={5} done={false} />
+            <div>
+              <p className="font-semibold text-gray-900 text-sm">Email Delivery</p>
+              <p className="text-xs text-gray-400">Report always saves to SharePoint automatically</p>
+            </div>
+          </div>
+
+          {/* Toggle */}
+          <label className="flex items-center gap-3 cursor-pointer select-none">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={sendEmail}
+              onClick={() => setSendEmail(v => !v)}
+              className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none ${
+                sendEmail ? 'bg-[#E31837]' : 'bg-gray-200'
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                  sendEmail ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+            <span className="text-sm font-medium text-gray-700">
+              Email this report to me
+              {session?.email && (
+                <span className="ml-1.5 text-xs text-gray-400 font-normal">({session.email})</span>
+              )}
+            </span>
+          </label>
+
+          {/* Additional email — only shown when toggle is on */}
+          {sendEmail && (
+            <div className="mt-4 space-y-2">
+              <label className="block text-xs font-medium text-gray-600 uppercase tracking-wide">
+                Additional recipient <span className="font-normal text-gray-400 normal-case">(optional)</span>
+              </label>
+              <input
+                type="email"
+                value={additionalEmail}
+                onChange={e => setAdditionalEmail(e.target.value)}
+                placeholder="colleague@example.com"
+                className="w-full px-4 py-2.5 rounded-xl border-2 border-gray-200 text-sm focus:outline-none focus:border-[#E31837] focus:ring-2 focus:ring-[#E31837]/20 transition-all"
+              />
+            </div>
+          )}
         </div>
 
         {/* ── Errors / Success ─────────────────────────────────────────────── */}

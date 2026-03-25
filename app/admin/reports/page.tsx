@@ -2,13 +2,30 @@
 
 import { useAuth } from '@/lib/useAuth';
 import Header from '@/components/Header';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 
 interface ReportDef {
   id: string;
   name: string;
   outputTypes: string[];
   brands: string[];
+}
+
+interface RunLogEntry {
+  id:               string;
+  timestamp:        string;
+  userName:         string;
+  userEmail:        string;
+  reportId:         string;
+  reportName:       string;
+  brand:            string;
+  retailer:         string;
+  filename:         string;
+  status:           'success' | 'error';
+  errorMessage?:    string;
+  spPath?:          string;
+  emailSent?:       boolean;
+  emailRecipients?: string[];
 }
 
 const ALL_BRANDS      = ['Defy', 'Beko', 'Grundig'];
@@ -60,6 +77,15 @@ export default function AdminReportsPage() {
   const [reports, setReports]   = useState<ReportDef[]>([]);
   const [toast, setToast]       = useState<Toast | null>(null);
 
+  // Store Province Mapping
+  const [storeMapCount,      setStoreMapCount]      = useState<number | null>(null);
+  const [storeMapUploading,  setStoreMapUploading]  = useState(false);
+
+  // Run Log
+  const [runLog,        setRunLog]        = useState<RunLogEntry[]>([]);
+  const [runLogLoading, setRunLogLoading] = useState(false);
+  const runLogRef = useRef<HTMLDivElement>(null);
+
   // Add form
   const [addName,        setAddName]        = useState('');
   const [addOutputTypes, setAddOutputTypes] = useState<string[]>(['Excel']);
@@ -81,7 +107,46 @@ export default function AdminReportsPage() {
     if (res.ok) setReports(await res.json());
   }, []);
 
-  useEffect(() => { loadReports(); }, [loadReports]);
+  const loadStoreMapCount = useCallback(async () => {
+    const res = await fetch('/api/store-map');
+    if (res.ok) {
+      const { count } = await res.json();
+      setStoreMapCount(count);
+    }
+  }, []);
+
+  const loadRunLogData = useCallback(async () => {
+    setRunLogLoading(true);
+    const res = await fetch('/api/run-log');
+    if (res.ok) setRunLog(await res.json());
+    setRunLogLoading(false);
+  }, []);
+
+  useEffect(() => {
+    loadReports();
+    loadStoreMapCount();
+    loadRunLogData();
+  }, [loadReports, loadStoreMapCount, loadRunLogData]);
+
+  async function handleStoreMapUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setStoreMapUploading(true);
+    const fd = new FormData();
+    fd.append('file', file);
+    const res = await fetch('/api/store-map', { method: 'POST', body: fd });
+    setStoreMapUploading(false);
+    // Reset input so same file can be re-uploaded
+    e.target.value = '';
+    if (res.ok) {
+      const { count } = await res.json();
+      setStoreMapCount(count);
+      notify(`Store map updated — ${count} stores loaded`);
+    } else {
+      const { error } = await res.json().catch(() => ({ error: 'Upload failed' }));
+      notify(error || 'Upload failed', 'error');
+    }
+  }
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -169,9 +234,15 @@ export default function AdminReportsPage() {
         {/* Page header */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
           <div className="border-l-4 border-[#E31837] px-6 py-4">
-            <h1 className="text-xl font-bold text-gray-900">Reports Control Centre</h1>
-            <p className="text-sm text-gray-500 mt-0.5">Add, edit or remove report types available to users.</p>
+            <h1 className="text-xl font-bold text-gray-900">Control Centre</h1>
+            <p className="text-sm text-gray-500 mt-0.5">Manage report types, brands, and reference data for the platform.</p>
           </div>
+        </div>
+
+        {/* Reports section heading */}
+        <div className="px-1">
+          <h2 className="text-base font-bold text-gray-800 uppercase tracking-wide">Report Management</h2>
+          <p className="text-xs text-gray-400 mt-0.5">Add, edit or remove report types available to users.</p>
         </div>
 
         {/* Add report form */}
@@ -280,6 +351,169 @@ export default function AdminReportsPage() {
             </div>
           )}
         </div>
+        {/* Run Log section heading */}
+        <div className="px-1 pt-2">
+          <h2 className="text-base font-bold text-gray-800 uppercase tracking-wide">Run Log</h2>
+          <p className="text-xs text-gray-400 mt-0.5">Every report generation — who ran it, when, and what was produced.</p>
+        </div>
+
+        {/* Run Log table */}
+        <div ref={runLogRef} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="border-l-4 border-[#E31837] px-6 py-4 flex items-center justify-between">
+            <div>
+              <h2 className="font-semibold text-gray-800">
+                Report Runs
+                <span className="text-gray-400 font-normal ml-2">{runLog.length} entries</span>
+              </h2>
+            </div>
+            <button
+              onClick={loadRunLogData}
+              disabled={runLogLoading}
+              className="text-xs text-[#E31837] hover:text-[#c01430] font-medium disabled:opacity-40"
+            >
+              {runLogLoading ? 'Refreshing…' : '↻ Refresh'}
+            </button>
+          </div>
+
+          {runLog.length === 0 ? (
+            <p className="px-6 pb-6 text-sm text-gray-400">
+              {runLogLoading ? 'Loading…' : 'No reports have been run yet.'}
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b border-gray-100">
+                  <tr>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Date / Time</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">User</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Report</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Brand</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">File</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">SP</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Email</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {runLog.map(entry => {
+                    const ts = new Date(entry.timestamp);
+                    const dateStr = ts.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+                    const timeStr = ts.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
+                    return (
+                      <tr key={entry.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-4 py-3 text-gray-700 whitespace-nowrap">
+                          <span className="font-medium">{dateStr}</span>
+                          <span className="text-gray-400 ml-1.5">{timeStr}</span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="font-medium text-gray-900 leading-tight">{entry.userName}</div>
+                          <div className="text-xs text-gray-400 leading-tight">{entry.userEmail}</div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="font-medium text-gray-900 leading-tight">{entry.reportName}</div>
+                          {entry.retailer && <div className="text-xs text-gray-400 leading-tight">{entry.retailer}</div>}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs font-medium">{entry.brand}</span>
+                        </td>
+                        <td className="px-4 py-3 text-xs text-gray-500 font-mono max-w-[180px] truncate" title={entry.filename}>
+                          {entry.filename || '—'}
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          {entry.spPath ? (
+                            <a
+                              href={entry.spPath}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title={entry.spPath}
+                              className="inline-flex items-center justify-center w-6 h-6 rounded bg-blue-50 hover:bg-blue-100 text-blue-600 transition-colors"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                              </svg>
+                            </a>
+                          ) : (
+                            <span className="text-gray-300 text-xs">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          {entry.emailSent ? (
+                            <span
+                              className="px-2 py-0.5 bg-green-50 text-green-700 rounded text-xs font-semibold"
+                              title={entry.emailRecipients?.join(', ')}
+                            >
+                              Sent
+                            </span>
+                          ) : (
+                            <span className="text-gray-300 text-xs">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          {entry.status === 'success' ? (
+                            <span className="px-2 py-0.5 bg-green-50 text-green-700 rounded text-xs font-semibold">Success</span>
+                          ) : (
+                            <span className="px-2 py-0.5 bg-red-50 text-red-700 rounded text-xs font-semibold" title={entry.errorMessage}>
+                              Error
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Store Maintenance section heading */}
+        <div className="px-1">
+          <h2 className="text-base font-bold text-gray-800 uppercase tracking-wide">Store Maintenance</h2>
+          <p className="text-xs text-gray-400 mt-0.5">Manage reference data used to enrich reports.</p>
+        </div>
+
+        {/* Store Province Mapping */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="border-l-4 border-[#E31837] px-6 py-4">
+            <h2 className="font-semibold text-gray-800">Store Province Mapping</h2>
+            <p className="text-sm text-gray-500 mt-0.5">
+              Upload a control file to map stores to provinces. Reports use this to populate the PROVINCE column.
+            </p>
+          </div>
+          <div className="px-6 pb-6 space-y-3">
+            <p className="text-xs text-gray-500">
+              Expected columns: <span className="font-mono bg-gray-100 px-1 rounded">STORE NAME</span>
+              {' · '}<span className="font-mono bg-gray-100 px-1 rounded">STORE CODE</span>
+              {' · '}<span className="font-mono bg-gray-100 px-1 rounded">PROVINCE</span>
+            </p>
+
+            {storeMapCount !== null && (
+              <p className={`text-sm font-medium ${storeMapCount > 0 ? 'text-green-700' : 'text-gray-400'}`}>
+                {storeMapCount > 0
+                  ? `✓ ${storeMapCount} store${storeMapCount === 1 ? '' : 's'} currently mapped`
+                  : 'No store map loaded yet'}
+              </p>
+            )}
+
+            <div>
+              <label className={`inline-block cursor-pointer px-5 py-2 rounded-lg text-sm font-semibold text-white transition-colors ${
+                storeMapUploading
+                  ? 'bg-gray-400 cursor-not-allowed'
+                  : 'bg-[#E31837] hover:bg-[#c01430]'
+              }`}>
+                {storeMapUploading ? 'Uploading…' : storeMapCount && storeMapCount > 0 ? 'Replace Control File' : 'Upload Control File'}
+                <input
+                  type="file"
+                  accept=".xlsx,.xls"
+                  className="hidden"
+                  onChange={handleStoreMapUpload}
+                  disabled={storeMapUploading}
+                />
+              </label>
+            </div>
+          </div>
+        </div>
+
       </main>
 
       {/* Edit modal */}
