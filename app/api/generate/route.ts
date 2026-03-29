@@ -6,6 +6,7 @@ import { generateRedFlag, extractRedFlagProblems } from '@/lib/reports/red-flag'
 import { generateStandReport } from '@/lib/reports/stand-report';
 import { generateTrainingFeedback } from '@/lib/reports/training-feedback';
 import { generateActivationReport } from '@/lib/reports/activation-report';
+import { generateServiceCallReport } from '@/lib/reports/service-call-report';
 import { loadStoreMap } from '@/lib/storeMapData';
 import { loadReports } from '@/lib/reportData';
 import { loadUsers } from '@/lib/userData';
@@ -146,6 +147,10 @@ export async function POST(req: NextRequest) {
 
     } else if (reportId === 'activation-report') {
       const { buffer, filename, rawDates } = await generateActivationReport(fileBuffer, brand);
+      results.push({ excelBuffer: buffer, filename, rawDates, weekLabel: '', retailer: '', label: '' });
+
+    } else if (reportId === 'service-call-report') {
+      const { buffer, filename, rawDates } = await generateServiceCallReport(fileBuffer, brand);
       results.push({ excelBuffer: buffer, filename, rawDates, weekLabel: '', retailer: '', label: '' });
 
     } else {
