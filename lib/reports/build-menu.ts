@@ -95,12 +95,9 @@ export function buildMenuSheet(wb: ExcelJS.Workbook, opts: BuildMenuOpts): void 
   titleCell.alignment = { vertical: 'middle', horizontal: 'left' };
   ws.mergeCells(2, 1, 2, 3); // title spans cols A–C so text has room at 22pt
 
-  // Logos stacked in right portion of col C (clear of title text)
+  // Defy logo — top-right corner of row 2, clear of title text
   if (defyLogoId != null) {
-    ws.addImage(defyLogoId,   { tl: { col: 2.62, row: 1.08 }, ext: { width: 50, height: 50 } });
-  }
-  if (atomicLogoId != null) {
-    ws.addImage(atomicLogoId, { tl: { col: 2.42, row: 1.42 }, ext: { width: 165, height: 35 } });
+    ws.addImage(defyLogoId, { tl: { col: 2.72, row: 1.04 }, ext: { width: 95, height: 52 } });
   }
 
   // Row 3: subtitle
@@ -197,8 +194,15 @@ export function buildMenuSheet(wb: ExcelJS.Workbook, opts: BuildMenuOpts): void 
   if (perigeeLogoId != null) {
     // ws row nextFreeRow (1-indexed) → image row (nextFreeRow - 1) (0-indexed)
     ws.addImage(perigeeLogoId, {
-      tl:  { col: 2.4, row: nextFreeRow - 1 + 0.05 },
-      ext: { width: 55, height: 55 },
+      tl:  { col: 2.04, row: nextFreeRow - 1 + 0.1 },
+      ext: { width: 55, height: 50 },
+    });
+  }
+  // Atomic logo — bottom-right, alongside Perigee in the "Powered by" row
+  if (atomicLogoId != null) {
+    ws.addImage(atomicLogoId, {
+      tl:  { col: 2.53, row: nextFreeRow - 1 + 0.3 },
+      ext: { width: 130, height: 27 },
     });
   }
 

@@ -20,7 +20,7 @@ import JSZip from 'jszip';
 import * as XLSX from 'xlsx';
 import fs   from 'fs';
 import path from 'path';
-import { downloadFileFromSP } from '@/lib/graph-oj';
+import { listFilesInSPFolder, downloadSPFileById } from '@/lib/graph-oj';
 import { loadAppSettings }    from '@/lib/appSettings';
 
 // ─── Slide dimensions (A4 landscape, EMU) ────────────────────────────────────
@@ -88,7 +88,11 @@ function xmlEsc(s: string): string {
 }
 
 function urlToImageId(url: string): string {
-  return url ? url.replace(/[/:]/g, '') : '';
+  if (!url) return '';
+  // Perigee URL format: .../get_image/{imageId}/NONE/NONE
+  // The image ID is the segment starting with "perigee-", not the last segment.
+  const seg = url.split('/').find(s => s.toLowerCase().startsWith('perigee-'));
+  return seg ?? '';
 }
 
 function parseDdMmYyyy(date: string): Date | null {
@@ -332,8 +336,10 @@ function buildContentSlideRels(
 
 // ─── Presentation XML helpers ─────────────────────────────────────────────────
 function buildPresRels(tplRels: string, slideFiles: string[]): string {
-  // Remove existing slide Relationship entries
-  const stripped = tplRels.replace(/<Relationship[^>]+Type="[^"]*\/slide"[^>]*\/>/g, '');
+  // Remove existing slide Relationship entries + changesInfo (co-authoring artifact → repair dialog)
+  const stripped = tplRels
+    .replace(/<Relationship[^>]+Type="[^"]*\/slide"[^>]*\/>/g, '')
+    .replace(/<Relationship[^>]+Type="[^"]*changesInfo[^"]*"[^>]*\/>/g, '');
   // Insert new slide entries before </Relationships>
   const slideRels = slideFiles
     .map((file, i) => {
@@ -357,14 +363,18 @@ function buildPresXml(tplXml: string, slideCount: number): string {
 
 function buildContentTypes(tplCt: string, slideFiles: string[]): string {
   // Remove existing slide Override entries
-  const stripped = tplCt.replace(
+  let out = tplCt.replace(
     /<Override PartName="\/ppt\/slides\/[^"]*" ContentType="[^"]*slide\+xml"[^/]*\/>/g, '',
   );
-  // Insert new ones before </Types>
+  // Add jpg content type if not already present (template only declares png)
+  if (!out.includes('Extension="jpg"') && !out.includes('Extension="jpeg"')) {
+    out = out.replace('<Default Extension="png"', '<Default Extension="jpg" ContentType="image/jpeg"/><Default Extension="png"');
+  }
+  // Insert new slide Override entries before </Types>
   const overrides = slideFiles
     .map(f => `<Override PartName="/ppt/slides/${f}" ContentType="${SLD_CT}"/>`)
     .join('');
-  return stripped.replace('</Types>', `${overrides}</Types>`);
+  return out.replace('</Types>', `${overrides}</Types>`);
 }
 
 // ─── Main export ──────────────────────────────────────────────────────────────
@@ -428,7 +438,29 @@ export async function generateStandReport(
   ).trim();
 
   const allIds = [...new Set(slideGroups.flatMap(g => g.imageIds).filter(Boolean))];
-  const fetched = await Promise.all(allIds.map(id => downloadFileFromSP(PICTURES_FOLDER, `${id}.jpg`)));
+
+  // Recursively index all .jpg files in the pictures folder (including subfolders
+  // created by the VBA downloader) then fetch only the ones we need.
+  const spFiles = await listFilesInSPFolder(PICTURES_FOLDER);
+  console.log(`[stand-report] SP file index: ${spFiles.size} file(s) found in "${PICTURES_FOLDER}" (incl. subfolders)`);
+
+  // Diagnostic: log the first 5 SP filenames so we can verify naming matches
+  const spSample = [...spFiles.keys()].slice(0, 5);
+  if (spSample.length) console.log(`[stand-report] SP sample filenames:`, spSample);
+
+  // Diagnostic: log the first 3 expected IDs so we can compare
+  const idSample = allIds.slice(0, 3).map(id => `${id}.jpg`.toLowerCase());
+  if (idSample.length) console.log(`[stand-report] Expected image filenames:`, idSample);
+
+  const fetched = await Promise.all(
+    allIds.map(async id => {
+      const key    = `${id}.jpg`.toLowerCase();
+      const itemId = spFiles.get(key);
+      if (!itemId) return null;
+      return downloadSPFileById(itemId);
+    })
+  );
+
   const imageBufs = new Map<string, Buffer>();
   allIds.forEach((id, i) => { if (fetched[i]) imageBufs.set(id, fetched[i]!); });
 
@@ -450,7 +482,8 @@ export async function generateStandReport(
   // ── 6. Build output zip ────────────────────────────────────────────────────
   const outZip = new JSZip();
 
-  // Copy all template files except slides & manifest files we'll rebuild
+  // Copy all template files except slides & manifest files we'll rebuild.
+  // Also skip changesInfos/ — these are co-authoring artifacts that cause repair dialogs.
   const skipSet = new Set([
     'ppt/slides/slide1.xml', 'ppt/slides/slide2.xml', 'ppt/slides/slide3.xml',
     'ppt/slides/_rels/slide1.xml.rels', 'ppt/slides/_rels/slide2.xml.rels',
@@ -459,7 +492,7 @@ export async function generateStandReport(
     '[Content_Types].xml',
   ]);
   for (const [name, file] of Object.entries(tplZip.files)) {
-    if (file.dir || skipSet.has(name)) continue;
+    if (file.dir || skipSet.has(name) || name.startsWith('ppt/changesInfos/')) continue;
     outZip.file(name, await file.async('nodebuffer'));
   }
 

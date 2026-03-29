@@ -4,6 +4,8 @@ import { randomUUID } from 'crypto';
 import { generateMakroStockCount, analyzeStockCount } from '@/lib/reports/makro-stock-count';
 import { generateRedFlag, extractRedFlagProblems } from '@/lib/reports/red-flag';
 import { generateStandReport } from '@/lib/reports/stand-report';
+import { generateTrainingFeedback } from '@/lib/reports/training-feedback';
+import { generateActivationReport } from '@/lib/reports/activation-report';
 import { loadStoreMap } from '@/lib/storeMapData';
 import { loadReports } from '@/lib/reportData';
 import { loadUsers } from '@/lib/userData';
@@ -138,11 +140,38 @@ export async function POST(req: NextRequest) {
         contentType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
       });
 
+    } else if (reportId === 'training-feedback-report') {
+      const { buffer, filename, rawDates } = await generateTrainingFeedback(fileBuffer, brand);
+      results.push({ excelBuffer: buffer, filename, rawDates, weekLabel: '', retailer: '', label: '' });
+
+    } else if (reportId === 'activation-report') {
+      const { buffer, filename, rawDates } = await generateActivationReport(fileBuffer, brand);
+      results.push({ excelBuffer: buffer, filename, rawDates, weekLabel: '', retailer: '', label: '' });
+
     } else {
       return NextResponse.json(
         { error: `Report "${reportId}" is not yet implemented.` },
         { status: 422 },
       );
+    }
+
+    // ── Email size warning ────────────────────────────────────────────────────
+    // Warn the user before emailing a large file. SP upload always happens.
+    if (sendEmail && !confirmed) {
+      const sizeWarnings: string[] = [];
+      for (const r of results) {
+        const mb = r.excelBuffer.length / (1024 * 1024);
+        if (mb > 4) {
+          sizeWarnings.push(
+            `"${r.filename}" is ${mb.toFixed(1)} MB. ` +
+            `Large files may fail to deliver by email. ` +
+            `The file will still be saved to SharePoint — you can download it from there and use WeTransfer to send to your client instead.`
+          );
+        }
+      }
+      if (sizeWarnings.length > 0) {
+        return NextResponse.json({ warnings: sizeWarnings }, { status: 200 });
+      }
     }
 
     // Capture for after() closure

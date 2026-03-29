@@ -310,6 +310,7 @@ export default function DashboardPage() {
   const [error,             setError]             = useState<string | null>(null);
   const [success,           setSuccess]           = useState<string | null>(null);
   const [warnings,          setWarnings]          = useState<string[] | null>(null);
+  const [largeFileWarning,  setLargeFileWarning]  = useState(false);
 
   // Red flag problem distribution
   const [problems,          setProblems]          = useState<string[]>([]);
@@ -372,7 +373,7 @@ export default function DashboardPage() {
     r.brands.some(b => brands.includes(b))
   );
 
-  async function handleGenerate(confirmed = false) {
+  async function handleGenerate(confirmed = false, ignoreLargeFile = false) {
     setError(null);
     setSuccess(null);
     if (!confirmed) setWarnings(null);
@@ -380,6 +381,12 @@ export default function DashboardPage() {
     if (!brands.length) { setError('Select at least one brand.'); return; }
     if (!report)        { setError('Select a report type.'); return; }
     if (!file)          { setError('Upload a raw data file.'); return; }
+
+    // Warn before emailing if the uploaded file exceeds 4 MB
+    if (!ignoreLargeFile && sendEmail && file && file.size > 4 * 1024 * 1024) {
+      setLargeFileWarning(true);
+      return;
+    }
 
     if (isRedFlag) {
       if (problemsLoading) { setError('Still parsing problems from the file — please wait.'); return; }
@@ -666,6 +673,42 @@ export default function DashboardPage() {
             </div>
           )}
         </div>
+
+        {/* ── Large file email warning ─────────────────────────────────────── */}
+        {largeFileWarning && (
+          <div className="bg-amber-50 border border-amber-300 rounded-xl px-4 py-4 space-y-3">
+            <div className="flex items-start gap-2">
+              <svg className="w-5 h-5 mt-0.5 shrink-0 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+              </svg>
+              <div>
+                <p className="font-semibold text-amber-800 text-sm">This file may be too large to email</p>
+                <p className="text-sm text-amber-700 mt-1">
+                  PPT reports with images can be very large and will likely fail as an email attachment.
+                  Are you sure you want to email it? Remember — the report is always saved to SharePoint first, where you can WeTransfer it to your client.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-3 pt-1">
+              <button
+                type="button"
+                onClick={() => { setLargeFileWarning(false); handleGenerate(false, true); }}
+                disabled={generating}
+                className="px-5 py-2 rounded-xl bg-[#E31837] hover:bg-[#c01430] disabled:bg-gray-200 disabled:text-gray-400 text-white text-sm font-semibold transition-all"
+              >
+                {generating ? 'Generating…' : 'Email it anyway'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setLargeFileWarning(false)}
+                disabled={generating}
+                className="px-5 py-2 rounded-xl border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 text-sm font-semibold transition-all"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* ── Warnings confirmation card ───────────────────────────────────── */}
         {warnings && (

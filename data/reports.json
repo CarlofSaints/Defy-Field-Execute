@@ -9,5 +9,5 @@
   { "id": "training-feedback-report", "name": "TRAINING FEEDBACK REPORT", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] },
   { "id": "stand-report", "name": "STAND REPORT", "outputTypes": ["PPT"], "brands": ["Defy", "Beko"] },
   { "id": "training-feedback-form", "name": "TRAINING FEEDBACK FORM", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] },
-  { "id": "activation-form", "name": "ACTIVATION FORM", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] }
+  { "id": "activation-report", "name": "ACTIVATION REPORT", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] }
 ]

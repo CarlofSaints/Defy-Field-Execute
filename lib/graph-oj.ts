@@ -125,6 +125,80 @@ export async function downloadFileFromSP(
 }
 
 /**
+ * Recursively list all files inside a SharePoint folder (including subfolders).
+ * Uses the /children endpoint (not search) so results are always current — no
+ * indexing delay for recently added or moved files.
+ * Returns a Map of lowercase filename → driveItem ID.
+ * Falls back to an empty Map on any error.
+ */
+export async function listFilesInSPFolder(
+  folderPath: string,
+): Promise<Map<string, string>> {
+  try {
+    const token   = await getToken();
+    const siteId  = await getSiteId();
+    const driveId = await getDriveId(siteId);
+    const fileMap = new Map<string, string>();
+
+    async function listChildren(path: string): Promise<void> {
+      const encoded = path.split('/').map(p => encodeURIComponent(p)).join('/');
+      let nextUrl: string | null =
+        `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encoded}:/children?$select=id,name,file,folder&$top=1000`;
+
+      while (nextUrl) {
+        const res = await fetch(nextUrl, { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) {
+          console.error(`[listFilesInSPFolder] children failed (${path}): ${res.status} ${await res.text()}`);
+          break;
+        }
+        const data = await res.json() as {
+          value?: { id: string; name: string; file?: object; folder?: object }[];
+          '@odata.nextLink'?: string;
+        };
+        const subfolders: string[] = [];
+        for (const item of data.value ?? []) {
+          if (item.file && item.id) {
+            fileMap.set(item.name.toLowerCase(), item.id);
+          } else if (item.folder) {
+            subfolders.push(`${path}/${item.name}`);
+          }
+        }
+        // Recurse into subfolders in parallel
+        await Promise.all(subfolders.map(listChildren));
+        nextUrl = data['@odata.nextLink'] ?? null;
+      }
+    }
+
+    await listChildren(folderPath);
+    return fileMap;
+  } catch (err) {
+    console.error(`[listFilesInSPFolder] error:`, err instanceof Error ? err.message : err);
+    return new Map();
+  }
+}
+
+/**
+ * Download a SharePoint file by its driveItem ID using authenticated Graph API.
+ * More reliable than pre-auth URLs which aren't always returned for SP files.
+ */
+export async function downloadSPFileById(itemId: string): Promise<Buffer | null> {
+  try {
+    const token   = await getToken();
+    const siteId  = await getSiteId();
+    const driveId = await getDriveId(siteId);
+    const url = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/content`;
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) {
+      console.error(`[downloadSPFileById] ${itemId}: ${res.status}`);
+      return null;
+    }
+    return Buffer.from(await res.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Send an email via Microsoft Graph (OJ mailbox).
  */
 export async function sendGraphEmail(params: {
