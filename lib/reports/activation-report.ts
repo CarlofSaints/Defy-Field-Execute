@@ -20,24 +20,29 @@
  *  17   Image URL 1 (Activation Stand 1)
  *  18   Image URL 2 (Activation Stand 2)
  *  19   Image URL 3 (Activation Stand 3)
+ *  20   Image URL 4 (Activation Stand 4)  — future Perigee expansion
+ *  21   Image URL 5 (Activation Stand 5)  — future Perigee expansion
  *
  * Image handling:
- *   VBA saves each image as "{urlToFilename(url)}.jpg" in the
- *   ACTIVATION IMAGE DOWNLOADS SharePoint folder.
+ *   VBA saves each image as "{perigee-id}.jpg" where {perigee-id} is the
+ *   last meaningful path segment of the Perigee image URL
+ *   (e.g. "perigee-1307447LTnKUCFZBrdtVk").
+ *
  *   SP folder path: DFE_ACTIVATION_PICTURES_SP_PATH env var
  *   Default:        {DFE_SP_BASE_PATH}/ACTIVATION IMAGE DOWNLOADS
  *
- *   If an image is not found on SP the cell keeps its clickable URL hyperlink.
+ *   If the file is not found on SP the cell keeps its clickable URL hyperlink.
  */
 import ExcelJS from 'exceljs';
 import * as XLSX from 'xlsx';
 import fs   from 'fs';
 import path from 'path';
 import { buildMenuSheet, applyHeaderStyle, applyDataStyle, addNavRow } from './build-menu';
-import { downloadFileFromSP } from '@/lib/graph-oj';
+import { listFilesInSPFolder, downloadSPFileById } from '@/lib/graph-oj';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const SHEET_NAME = 'ACTIVATIONS';
+const MAX_IMAGES = 5;
 
 const OUT_COLS = [
   'REPRESENTATIVE NAME',   // 1
@@ -49,16 +54,21 @@ const OUT_COLS = [
   'ACTIVATION STAND 1',    // 7  ← image
   'ACTIVATION STAND 2',    // 8  ← image
   'ACTIVATION STAND 3',    // 9  ← image
-  'CHANNEL',               // 10
+  'ACTIVATION STAND 4',    // 10 ← image
+  'ACTIVATION STAND 5',    // 11 ← image
+  'CHANNEL',               // 12
 ];
 
 // Image columns (1-indexed) and their 0-indexed equivalents for addImage
-const IMG_COLS  = [7, 8, 9];          // 1-indexed
-const IMG_COLS0 = [6, 7, 8];          // 0-indexed
+const IMG_COLS  = [7, 8, 9, 10, 11];          // 1-indexed
+const IMG_COLS0 = [6, 7, 8,  9, 10];          // 0-indexed
 const IMAGE_W     = 120; // px
 const IMAGE_H     = 90;  // px
 const ROW_H_IMAGE = 72;  // pts (accommodates IMAGE_H with small margin)
 const ROW_H_PLAIN = 20;  // pts
+
+// Raw data column indices for image URLs (0-indexed)
+const RAW_IMAGE_COLS = [17, 18, 19, 20, 21];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function s(row: (unknown)[], i: number): string {
@@ -66,15 +76,16 @@ function s(row: (unknown)[], i: number): string {
 }
 
 /**
- * Convert a Perigee image URL to the filename used by the VBA downloader.
- * Windows can't use "/" or ":" in filenames, so the VBA strips both characters.
+ * Extract the Perigee image ID from a URL — the segment starting with "perigee-".
+ * This matches the VBA ImageFilename() convention which extracts the token.
  *
- * e.g. "https://live.perigeeportal.co.za/.../perigee-xxx/NONE/NONE"
- *   →  "httpslive.perigeeportal.co.za...perigee-xxxNONENONE"  (.jpg added by caller)
+ * e.g. "https://live.perigeeportal.co.za/.../perigee-1307447LTnKUCFZBrdtVk/NONE/NONE"
+ *   →  "perigee-1307447LTnKUCFZBrdtVk"
  */
-function urlToFilename(url: string): string {
+function urlToImageId(url: string): string {
   if (!url) return '';
-  return url.replace(/[/:]/g, '');
+  const seg = url.split('/').find(s => s.toLowerCase().startsWith('perigee-'));
+  return seg ?? '';
 }
 
 function parseDdMmYyyy(d: string): Date | null {
@@ -123,13 +134,15 @@ export async function generateActivationReport(
     startDate:  string;
     endDate:    string;
     type:       string;
-    imageUrls:  string[];      // up to 3
+    imageUrls:  string[];      // up to MAX_IMAGES
     imageIds:   string[];      // corresponding VBA filenames (no ext)
     channel:    string;
   }
 
   const rows: ActivationRow[] = dataRows.map(r => {
-    const imageUrls = [s(r, 17), s(r, 18), s(r, 19)].filter(Boolean);
+    const imageUrls = RAW_IMAGE_COLS
+      .map(colIdx => s(r, colIdx))
+      .filter(v => v.startsWith('http'));
     return {
       repName:   [s(r, 2), s(r, 3)].filter(Boolean).join(' ') || 'UNKNOWN',
       date:      s(r, 9),
@@ -138,7 +151,7 @@ export async function generateActivationReport(
       endDate:   s(r, 15),
       type:      s(r, 16),
       imageUrls,
-      imageIds:  imageUrls.map(urlToFilename),
+      imageIds:  imageUrls.map(urlToImageId),
       channel:   s(r, 5),
     };
   });
@@ -156,8 +169,26 @@ export async function generateActivationReport(
   // Collect unique non-empty image IDs
   const uniqueIds = [...new Set(rows.flatMap(r => r.imageIds).filter(Boolean))];
 
+  // Recursively index all .jpg files in the pictures folder (including subfolders
+  // created by older VBA versions) then fetch only the ones we need.
+  const spFiles = await listFilesInSPFolder(PICTURES_FOLDER);
+  console.log(
+    `[activation-report] SP file index: ${spFiles.size} file(s) in "${PICTURES_FOLDER}" (incl. subfolders)`
+  );
+
+  // Diagnostic: log samples so we can verify naming matches
+  const spSample = [...spFiles.keys()].slice(0, 5);
+  if (spSample.length) console.log(`[activation-report] SP sample filenames:`, spSample);
+  const idSample = uniqueIds.slice(0, 3).map(id => `${id}.jpg`.toLowerCase());
+  if (idSample.length) console.log(`[activation-report] Expected image filenames:`, idSample);
+
   const fetched = await Promise.all(
-    uniqueIds.map(id => downloadFileFromSP(PICTURES_FOLDER, `${id}.jpg`))
+    uniqueIds.map(async id => {
+      const key    = `${id}.jpg`.toLowerCase();
+      const itemId = spFiles.get(key);
+      if (!itemId) return null;
+      return downloadSPFileById(itemId);
+    })
   );
   const imageBuffers = new Map<string, Buffer>();
   uniqueIds.forEach((id, idx) => {
@@ -166,8 +197,7 @@ export async function generateActivationReport(
   });
 
   console.log(
-    `[activation-report] SP images: ${imageBuffers.size}/${uniqueIds.length} ` +
-    `fetched from "${PICTURES_FOLDER}"`
+    `[activation-report] SP images: ${imageBuffers.size}/${uniqueIds.length} fetched`
   );
 
   // ── 4. Filename ────────────────────────────────────────────────────────────
@@ -235,6 +265,8 @@ export async function generateActivationReport(
       '',   // STAND 1 — set below
       '',   // STAND 2 — set below
       '',   // STAND 3 — set below
+      '',   // STAND 4 — set below
+      '',   // STAND 5 — set below
       row.channel,
     ]);
 
@@ -242,16 +274,16 @@ export async function generateActivationReport(
 
     let anyImageEmbedded = false;
 
-    // Handle each image slot (up to 3)
+    // Handle each image slot (up to MAX_IMAGES)
     row.imageUrls.forEach((url, slot) => {
-      if (!url) return;
+      if (!url || slot >= MAX_IMAGES) return;
       const colIdx1 = IMG_COLS[slot];   // 1-indexed
       const colIdx0 = IMG_COLS0[slot];  // 0-indexed for addImage
 
       const picCell = r.getCell(colIdx1);
 
       // Always write a fallback hyperlink
-      picCell.value = { text: '🔗 View', hyperlink: url, tooltip: 'View image on Perigee portal' };
+      picCell.value = { text: '\u{1F517} View', hyperlink: url, tooltip: 'View image on Perigee portal' };
       picCell.font  = { color: { argb: '0563C1' }, underline: true, size: 9, name: 'Arial' };
       picCell.alignment = { vertical: 'bottom', horizontal: 'left' };
 
@@ -274,8 +306,8 @@ export async function generateActivationReport(
     r.height = anyImageEmbedded ? ROW_H_IMAGE : ROW_H_PLAIN;
   });
 
-  // Column widths: [rep, date, place, start, end, type, img1, img2, img3, channel]
-  [24, 14, 28, 20, 20, 28, 18, 18, 18, 18]
+  // Column widths: [rep, date, place, start, end, type, img1-5, channel]
+  [24, 14, 28, 20, 20, 28, 18, 18, 18, 18, 18, 18]
     .forEach((w, idx) => { ws.getColumn(idx + 1).width = w; });
 
   const buffer = Buffer.from(await wb.xlsx.writeBuffer());

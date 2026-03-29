@@ -41,7 +41,7 @@ import * as XLSX from 'xlsx';
 import fs   from 'fs';
 import path from 'path';
 import { buildMenuSheet, applyHeaderStyle, applyDataStyle, addNavRow } from './build-menu';
-import { downloadFileFromSP } from '@/lib/graph-oj';
+import { listFilesInSPFolder, downloadSPFileById } from '@/lib/graph-oj';
 import { loadAppSettings } from '@/lib/appSettings';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -84,15 +84,16 @@ function safeSheet(name: string): string {
 }
 
 /**
- * Convert a Perigee image URL to the filename used by the VBA downloader.
- * Windows can't use "/" or ":" in filenames, so the VBA strips both characters.
+ * Extract the Perigee image ID from a URL — the segment starting with "perigee-".
+ * This matches the VBA ImageFilename() convention which extracts the token.
  *
- * e.g. "https://live.perigeeportal.co.za/.../perigee-xxx/NONE/NONE"
- *   →  "httpslive.perigeeportal.co.za...perigee-xxxNONENONE"     (.jpg added by caller)
+ * e.g. "https://live.perigeeportal.co.za/.../perigee-1307447LTnKUCFZBrdtVk/NONE/NONE"
+ *   →  "perigee-1307447LTnKUCFZBrdtVk"
  */
-function urlToFilename(url: string): string {
+function urlToImageId(url: string): string {
   if (!url) return '';
-  return url.replace(/[/:]/g, '');
+  const seg = url.split('/').find(s => s.toLowerCase().startsWith('perigee-'));
+  return seg ?? '';
 }
 
 // ─── Quick problem extractor (used by generate route for validation) ──────────
@@ -133,7 +134,7 @@ export async function generateRedFlag(
       problem:  String(row[15] ?? '').trim(),
       model:    String(row[16] ?? '').trim(),
       imageUrl,
-      imageId:  urlToFilename(imageUrl),
+      imageId:  urlToImageId(imageUrl),
       escalate: String(row[18] ?? '').trim(),
     };
   });
@@ -164,9 +165,18 @@ export async function generateRedFlag(
   // Collect unique image IDs across filtered rows
   const uniqueIds = [...new Set(filteredRows.map(r => r.imageId).filter(Boolean))];
 
-  // Fetch all in parallel; missing/error → null
+  // Recursively index all .jpg files in the pictures folder (including subfolders
+  // created by older VBA versions) then fetch only the ones we need.
+  const spFiles = await listFilesInSPFolder(PICTURES_FOLDER);
+  console.log(`[red-flag/${label}] SP file index: ${spFiles.size} file(s) in "${PICTURES_FOLDER}" (incl. subfolders)`);
+
   const fetched = await Promise.all(
-    uniqueIds.map(id => downloadFileFromSP(PICTURES_FOLDER, `${id}.jpg`))
+    uniqueIds.map(async id => {
+      const key    = `${id}.jpg`.toLowerCase();
+      const itemId = spFiles.get(key);
+      if (!itemId) return null;
+      return downloadSPFileById(itemId);
+    })
   );
   const imageBuffers = new Map<string, Buffer>();
   uniqueIds.forEach((id, idx) => {
@@ -174,7 +184,7 @@ export async function generateRedFlag(
     if (buf) imageBuffers.set(id, buf);
   });
 
-  console.log(`[red-flag/${label}] SP images: ${imageBuffers.size}/${uniqueIds.length} fetched from "${PICTURES_FOLDER}"`);
+  console.log(`[red-flag/${label}] SP images: ${imageBuffers.size}/${uniqueIds.length} fetched`);
 
   // ── 4. Group rows by "WHAT IS THE PROBLEM?" ───────────────────────────────
   const grouped = new Map<string, RedFlagRow[]>();
