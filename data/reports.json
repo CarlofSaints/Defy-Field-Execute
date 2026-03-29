@@ -1,14 +1,13 @@
 [
-  { "id": "makro-stock-count", "name": "MAKRO STOCK COUNT", "outputTypes": ["Excel"], "brands": ["Defy", "Beko", "Grundig"] },
-  { "id": "game-stock-count", "name": "GAME STOCK COUNT", "outputTypes": ["Excel"], "brands": ["Defy", "Beko", "Grundig"] },
-  { "id": "hirsch-stock-count", "name": "HIRSCH STOCK COUNT", "outputTypes": ["Excel"], "brands": ["Defy", "Beko", "Grundig"] },
-  { "id": "tafelberg-stock-count", "name": "TAFELBERG STOCK COUNT", "outputTypes": ["Excel"], "brands": ["Defy", "Beko", "Grundig"] },
-  { "id": "independent-stock-count", "name": "INDEPENDENT STOCK COUNT", "outputTypes": ["Excel"], "brands": ["Defy", "Beko", "Grundig"] },
-  { "id": "service-call-report", "name": "SERVICE CALL REPORT", "outputTypes": ["Excel"], "brands": ["Defy", "Beko", "Grundig"] },
-  { "id": "sales-red-flag-report", "name": "SALES REPORT RED FLAG REPORT", "outputTypes": ["Excel"], "brands": ["Defy", "Beko", "Grundig"] },
-  { "id": "training-feedback-report", "name": "TRAINING FEEDBACK REPORT", "outputTypes": ["Excel"], "brands": ["Defy", "Beko", "Grundig"] },
-  { "id": "service-marketing-shopfitting-red-flag", "name": "SERVICE MARKETING&SHOPFITTING RED FLAG", "outputTypes": ["Excel"], "brands": ["Defy", "Beko", "Grundig"] },
-  { "id": "stand-report", "name": "STAND REPORT", "outputTypes": ["PPT"], "brands": ["Defy", "Beko", "Grundig"] },
-  { "id": "training-feedback-form", "name": "TRAINING FEEDBACK FORM", "outputTypes": ["Excel"], "brands": ["Defy", "Beko", "Grundig"] },
-  { "id": "activation-form", "name": "ACTIVATION FORM", "outputTypes": ["Excel"], "brands": ["Defy", "Beko", "Grundig"] }
+  { "id": "makro-stock-count", "name": "MAKRO STOCK COUNT", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] },
+  { "id": "game-stock-count", "name": "GAME STOCK COUNT", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] },
+  { "id": "hirsch-stock-count", "name": "HIRSCH STOCK COUNT", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] },
+  { "id": "tafelberg-stock-count", "name": "TAFELBERG STOCK COUNT", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] },
+  { "id": "independent-stock-count", "name": "INDEPENDENT STOCK COUNT", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] },
+  { "id": "service-call-report", "name": "SERVICE CALL REPORT", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] },
+  { "id": "red-flag", "name": "RED FLAG REPORT", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] },
+  { "id": "training-feedback-report", "name": "TRAINING FEEDBACK REPORT", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] },
+  { "id": "stand-report", "name": "STAND REPORT", "outputTypes": ["PPT"], "brands": ["Defy", "Beko"] },
+  { "id": "training-feedback-form", "name": "TRAINING FEEDBACK FORM", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] },
+  { "id": "activation-form", "name": "ACTIVATION FORM", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] }
 ]

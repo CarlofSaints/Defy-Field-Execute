@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx';
 import path from 'path';
 import fs from 'fs';
 import type { StoreMapEntry } from '@/lib/storeMapData';
+import { buildMenuSheet, applyHeaderStyle, applyDataStyle, addNavRow } from './build-menu';
 
 // ─── Category mapping ───────────────────────────────────────────────────────
 // Maps the category header in the Perigee raw export to subCat + cat values
@@ -37,7 +38,7 @@ const CRITICAL_LINE_CODES = new Set([
   'DFF447',  'DFF436',  'DFF463', 'DAW389', 'DWD318', 'DTL160',
 ]);
 
-// Brand colours
+// Brand colour (used locally for pivot highlights etc.)
 const DEFY_RED = 'E31837';
 const WHITE    = 'FFFFFF';
 
@@ -60,7 +61,7 @@ interface DatabaseRow {
   criticalLines: string;
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Local helpers ────────────────────────────────────────────────────────────
 function getISOWeek(dateStr: string): { week: number; year: number } {
   const parts = dateStr.split('/');
   if (parts.length !== 3) return { week: 1, year: new Date().getFullYear() };
@@ -83,29 +84,6 @@ function extractProductCode(header: string): string {
   return words[0].toUpperCase();
 }
 
-function applyHeaderStyle(cell: ExcelJS.Cell) {
-  cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: DEFY_RED } };
-  cell.font = { bold: true, color: { argb: WHITE }, size: 10, name: 'Arial' };
-  cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
-  cell.border = {
-    top:    { style: 'thin', color: { argb: WHITE } },
-    bottom: { style: 'thin', color: { argb: WHITE } },
-    left:   { style: 'thin', color: { argb: WHITE } },
-    right:  { style: 'thin', color: { argb: WHITE } },
-  };
-}
-
-function applyDataStyle(cell: ExcelJS.Cell, isEven = false) {
-  cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: isEven ? 'F7F7F7' : WHITE } };
-  cell.font = { size: 10, name: 'Arial' };
-  cell.alignment = { vertical: 'middle', wrapText: false };
-  cell.border = {
-    top:    { style: 'thin', color: { argb: 'E0E0E0' } },
-    bottom: { style: 'thin', color: { argb: 'E0E0E0' } },
-    left:   { style: 'thin', color: { argb: 'E0E0E0' } },
-    right:  { style: 'thin', color: { argb: 'E0E0E0' } },
-  };
-}
 
 // ─── Province lookup helper ───────────────────────────────────────────────────
 function lookupProvince(storeCode: string, storeName: string, storeMap: StoreMapEntry[]): string {
@@ -126,6 +104,85 @@ function perigeeToDate(dateStr: string): Date {
   if (parts.length !== 3) return new Date(0);
   const [d, m, y] = parts.map(Number);
   return new Date(y, m - 1, d);
+}
+
+// ─── Pre-generate analysis ───────────────────────────────────────────────────
+// Parses only headers + row metadata — no Excel generation. Returns warnings
+// the user should acknowledge, or a hardError that blocks generation entirely.
+export function analyzeStockCount(fileBuffer: Buffer): { warnings: string[]; hardError: string | null } {
+  const inputWb = XLSX.read(fileBuffer, { type: 'buffer' });
+  const inputWs = inputWb.Sheets[inputWb.SheetNames[0]];
+  const rawData = XLSX.utils.sheet_to_json(inputWs, { header: 1, defval: null }) as (string | number | null)[][];
+
+  if (rawData.length < 2) {
+    return { warnings: [], hardError: 'No data rows found in the uploaded file.' };
+  }
+
+  const headers  = rawData[0] as (string | null)[];
+  const rawRows  = rawData.slice(1);
+  const warnings: string[] = [];
+
+  // 1. Count rows where the rep did not complete store check-in
+  const blankStoreCount = rawRows.filter(row =>
+    !String(row[7] ?? '').trim() && !String(row[6] ?? '').trim()
+  ).length;
+  if (blankStoreCount > 0) {
+    warnings.push(
+      `${blankStoreCount} row${blankStoreCount === 1 ? '' : 's'} have no Store Name or Store Code — ` +
+      `${blankStoreCount === 1 ? 'this rep' : 'these reps'} did not complete their store check-in ` +
+      `and will appear as "UNKNOWN" in the report.`
+    );
+  }
+
+  // 2. Find critical lines boundary and count SOH / on-floor / reason columns
+  let criticalLinesStartCol = Infinity;
+  for (let i = 0; i < headers.length; i++) {
+    const h = headers[i];
+    if (h && h.trim() === 'CRITICAL LINES') { criticalLinesStartCol = i; break; }
+  }
+
+  let sohCount     = 0;
+  let onFloorCount = 0;
+  let reasonCount  = 0;
+
+  for (let i = 0; i < headers.length && i < criticalLinesStartCol; i++) {
+    const h = headers[i];
+    if (!h || !h.toUpperCase().includes('SOH')) continue;
+    sohCount++;
+    const pc = extractProductCode(h).toUpperCase();
+    for (let j = Math.max(0, i - 5); j < i; j++) {
+      const h2 = headers[j];
+      if (h2 && h2.toUpperCase().startsWith('IS THE') && h2.toUpperCase().includes(pc)) { onFloorCount++; break; }
+    }
+    for (let j = i + 1; j < Math.min(headers.length, i + 5); j++) {
+      const h2 = headers[j];
+      if (h2 && h2.toUpperCase().startsWith('WHAT IS THE REASON') && h2.toUpperCase().includes(pc)) { reasonCount++; break; }
+    }
+  }
+
+  if (sohCount === 0) {
+    return {
+      warnings: [],
+      hardError:
+        'No product SOH columns found in the uploaded file. ' +
+        'Expected column headers containing "SOH" (e.g. "DBO489E 50cm Built-In Oven SOH"). ' +
+        'Check that you have uploaded the correct Perigee raw export for this report.',
+    };
+  }
+
+  if (onFloorCount === 0 && reasonCount === 0) {
+    warnings.push(
+      'This Perigee form does not include "Is the product on the floor?" or "What is the reason?" questions — ' +
+      'the ON FLOOR and REASON columns will be blank in all sheets. ' +
+      'This is normal for forms that only capture stock counts (e.g. Beko). ' +
+      'All other sheets (SUMMARY, DETAIL, ZERO SOH, DATABASE) will still be fully populated.'
+    );
+  } else {
+    if (onFloorCount === 0) warnings.push('No "Is the product on the floor?" questions found — the ON FLOOR column will be blank in all sheets.');
+    if (reasonCount  === 0) warnings.push('No "What is the reason?" questions found — the REASON column will be blank in all sheets.');
+  }
+
+  return { warnings, hardError: null };
 }
 
 // ─── Main export ─────────────────────────────────────────────────────────────
@@ -149,25 +206,18 @@ export async function generateMakroStockCount(
   // ── Deduplicate: same store → keep most recent submission by DATE (col J = index 9) ──
   // Some reps fill in the form multiple times for the same store in the same period.
   const storeLatest = new Map<string, { row: typeof rawRows[0]; dateMs: number }>();
-  for (const row of rawRows) {
+  for (let ri = 0; ri < rawRows.length; ri++) {
+    const row = rawRows[ri];
     const storeCode = String(row[7] ?? '').trim();
     const storeName = String(row[6] ?? '').trim();
-    const key = storeCode || storeName;
-    if (!key) continue;
+    // Rows with no store check-in get a unique key so they're included as UNKNOWN
+    const key = storeCode || storeName || `__NOSTORE_${ri}`;
     const dateMs = perigeeToDate(String(row[9] ?? '')).getTime();
     if (!storeLatest.has(key) || dateMs > storeLatest.get(key)!.dateMs) {
       storeLatest.set(key, { row, dateMs });
     }
   }
   const dataRows = [...storeLatest.values()].map(v => v.row);
-
-  if (dataRows.length === 0) {
-    throw new Error(
-      'No data rows found with a valid Store Name or Store Code. ' +
-      'Columns G (Store) and H (Store Code) appear to be blank in all rows — ' +
-      'check that reps have completed their store details before submitting.'
-    );
-  }
 
   // ── 2. Build category column map ──────────────────────────────────────────
   // Find where each category section starts; stop at CRITICAL LINES
@@ -325,25 +375,6 @@ function sheetHref(sheetName: string, cell = 'A1') {
   return `#${safe}!${cell}`;
 }
 
-// ─── Nav row (replaces the full banner on data sheets) ────────────────────────
-// Row 1: slim red bar — sheet title left, "← MENU" hyperlink right
-function addNavRow(ws: ExcelJS.Worksheet, sheetTitle: string, colCount: number) {
-  const row = ws.getRow(1);
-  row.height = 22;
-  for (let c = 1; c <= colCount; c++) {
-    const cell = row.getCell(c);
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: DEFY_RED } };
-  }
-  const title = row.getCell(1);
-  title.value = sheetTitle;
-  title.font  = { bold: true, color: { argb: WHITE }, size: 10, name: 'Arial' };
-  title.alignment = { vertical: 'middle', horizontal: 'left' };
-
-  const menuCell = row.getCell(colCount);
-  menuCell.value = { text: '⬅  MENU', hyperlink: sheetHref('MENU'), tooltip: 'Return to Menu' };
-  menuCell.font  = { bold: true, color: { argb: WHITE }, size: 10, name: 'Arial', underline: true };
-  menuCell.alignment = { vertical: 'middle', horizontal: 'right' };
-}
 
 // ─── Excel builder ────────────────────────────────────────────────────────────
 async function buildOutputExcel(
@@ -394,129 +425,19 @@ async function buildOutputExcel(
     { name: 'DATABASE',          desc: 'Full vertical database — all visits, all products · filterable' },
   ];
 
-  // ── MENU sheet (first sheet) ───────────────────────────────────────────────
+  // ── MENU sheet ─────────────────────────────────────────────────────────────
   {
-    const ws = wb.addWorksheet('MENU');
-    ws.views = [{ showGridLines: false }];
-
-    // Banner row — tall, red, with all three logos
-    const BANNER_H = 90;
-    ws.getRow(1).height = BANNER_H;
-    for (let c = 1; c <= 3; c++) {
-      const cell = ws.getRow(1).getCell(c);
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: DEFY_RED } };
-    }
-
-    // Logos: Defy (left, square 75×75), Atomic (centre-right, 190×40), Perigee (right, square 70×70)
-    if (defyLogoId !== null) {
-      ws.addImage(defyLogoId,    { tl: { col: 0, row: 0 }, ext: { width: 75,  height: 75  } });
-    }
-    if (atomicLogoId !== null) {
-      ws.addImage(atomicLogoId,  { tl: { col: 1, row: 0 }, ext: { width: 190, height: 40  } });
-    }
-    if (perigeeLogoId !== null) {
-      ws.addImage(perigeeLogoId, { tl: { col: 2, row: 0 }, ext: { width: 70,  height: 70  } });
-    }
-
-    // Row 2: blank spacer
-    ws.getRow(2).height = 12;
-
-    // Row 3: Report title
-    ws.getRow(3).height = 42;
-    const titleCell = ws.getRow(3).getCell(1);
-    titleCell.value = `${brand.toUpperCase()} — ${retailer.toUpperCase()} STOCK COUNT`;
-    titleCell.font  = { bold: true, color: { argb: DEFY_RED }, size: 18, name: 'Arial' };
-    titleCell.alignment = { vertical: 'middle', horizontal: 'left' };
-    ws.mergeCells(3, 1, 3, 3);
-
-    // Row 4: Week/date subtitle
-    ws.getRow(4).height = 22;
-    const subCell = ws.getRow(4).getCell(1);
     const genDate = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
-    subCell.value = `${weekLabel} · ${year}  ·  Generated: ${genDate}`;
-    subCell.font  = { color: { argb: '666666' }, size: 11, name: 'Arial' };
-    subCell.alignment = { vertical: 'middle', horizontal: 'left' };
-    ws.mergeCells(4, 1, 4, 3);
-
-    // Row 5: spacer
-    ws.getRow(5).height = 12;
-
-    // Row 6: Section header
-    ws.getRow(6).height = 26;
-    const idxHeader = ws.getRow(6).getCell(1);
-    idxHeader.value = 'REPORT INDEX';
-    idxHeader.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: DEFY_RED } };
-    idxHeader.font  = { bold: true, color: { argb: WHITE }, size: 11, name: 'Arial' };
-    idxHeader.alignment = { vertical: 'middle', horizontal: 'left' };
-    ws.mergeCells(6, 1, 6, 3);
-
-    // Row 7: Column headers
-    ws.getRow(7).height = 22;
-    ['#', 'SHEET', 'DESCRIPTION'].forEach((h, i) => {
-      const cell = ws.getRow(7).getCell(i + 1);
-      cell.value = h;
-      cell.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: '2D2D2D' } };
-      cell.font  = { bold: true, color: { argb: WHITE }, size: 10, name: 'Arial' };
-      cell.alignment = { vertical: 'middle', horizontal: i === 0 ? 'center' : 'left' };
+    buildMenuSheet(wb, {
+      title:        `${brand.toUpperCase()} — ${retailer.toUpperCase()} STOCK COUNT`,
+      subtitle:     `${weekLabel} · ${year}  ·  Generated: ${genDate}`,
+      sheetDefs:    SHEET_DEFS,
+      note:         '💡  Tip: On SUMMARY use ▼ CATEGORY / SUB CAT filters to slice the pivot by product type. On DETAIL, ZERO SOH and DATABASE use ▼ filters to filter by Province, Category, Store and more.',
+      defyLogoId,
+      atomicLogoId,
+      perigeeLogoId,
     });
-
-    // Rows 8+: one row per sheet
-    SHEET_DEFS.forEach(({ name, desc }, idx) => {
-      const rowNum = 8 + idx;
-      ws.getRow(rowNum).height = 22;
-      const isEven = idx % 2 === 0;
-      const bg = isEven ? 'F7F7F7' : WHITE;
-
-      // # column
-      const numCell = ws.getRow(rowNum).getCell(1);
-      numCell.value = idx + 1;
-      numCell.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
-      numCell.font  = { bold: true, color: { argb: DEFY_RED }, size: 10, name: 'Arial' };
-      numCell.alignment = { vertical: 'middle', horizontal: 'center' };
-      numCell.border = {
-        bottom: { style: 'thin', color: { argb: 'E0E0E0' } },
-        right:  { style: 'thin', color: { argb: 'E0E0E0' } },
-      };
-
-      // Sheet name — hyperlink
-      const nameCell = ws.getRow(rowNum).getCell(2);
-      nameCell.value = { text: name, hyperlink: sheetHref(name), tooltip: `Go to ${name}` };
-      nameCell.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
-      nameCell.font  = { bold: true, color: { argb: '0563C1' }, size: 10, name: 'Arial', underline: true };
-      nameCell.alignment = { vertical: 'middle', horizontal: 'left' };
-      nameCell.border = {
-        bottom: { style: 'thin', color: { argb: 'E0E0E0' } },
-        right:  { style: 'thin', color: { argb: 'E0E0E0' } },
-      };
-
-      // Description
-      const descCell = ws.getRow(rowNum).getCell(3);
-      descCell.value = desc;
-      descCell.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
-      descCell.font  = { color: { argb: '444444' }, size: 10, name: 'Arial' };
-      descCell.alignment = { vertical: 'middle', horizontal: 'left' };
-      descCell.border = {
-        bottom: { style: 'thin', color: { argb: 'E0E0E0' } },
-      };
-    });
-
-    // Filter note row
-    const noteRow = 8 + SHEET_DEFS.length + 1;
-    ws.getRow(noteRow).height = 30;
-    const noteCell = ws.getRow(noteRow).getCell(1);
-    noteCell.value = '💡  Tip: On SUMMARY use ▼ CATEGORY / SUB CAT filters to slice the pivot by product type. On DETAIL, ZERO SOH and DATABASE use ▼ filters to filter by Province, Category, Store and more.';
-    noteCell.font  = { italic: true, color: { argb: '888888' }, size: 9, name: 'Arial' };
-    noteCell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
-    ws.mergeCells(noteRow, 1, noteRow, 3);
-
-    // Column widths
-    ws.getColumn(1).width = 5;
-    ws.getColumn(2).width = 28;
-    ws.getColumn(3).width = 68;
   }
-
-  // ── Helper: data sheet nav row (no logos — just slim red bar) ─────────────
-  // Already defined above as addNavRow(ws, sheetTitle, colCount)
 
   // ── CRITICAL LINE OOS ─────────────────────────────────────────────────────
   // Flat filterable table: PROVINCE | STORE NAME | STORE CODE | REP NAME | DATE

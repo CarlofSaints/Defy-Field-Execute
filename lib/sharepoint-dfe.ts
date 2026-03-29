@@ -15,7 +15,7 @@
  *   DEFY/PERIGEE - FG/2. EXTERNAL SYNC/REPORTS/GRUNDIG/03- MAR26/Week Ending - 20260313
  */
 
-export type DfeBrand = 'DEFY' | 'GRUNDIG' | 'BEKO';
+export type DfeBrand = 'DEFY' | 'BEKO';
 
 const MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
 

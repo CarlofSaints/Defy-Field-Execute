@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { after } from 'next/server';
 import { randomUUID } from 'crypto';
-import { generateMakroStockCount } from '@/lib/reports/makro-stock-count';
+import { generateMakroStockCount, analyzeStockCount } from '@/lib/reports/makro-stock-count';
+import { generateRedFlag, extractRedFlagProblems } from '@/lib/reports/red-flag';
+import { generateStandReport } from '@/lib/reports/stand-report';
 import { loadStoreMap } from '@/lib/storeMapData';
 import { loadReports } from '@/lib/reportData';
 import { loadUsers } from '@/lib/userData';
@@ -10,6 +12,16 @@ import { sendRunNotification, sendReportEmail } from '@/lib/email';
 import { buildDfeFolderPath, uploadToSharePoint } from '@/lib/sharepoint-dfe';
 import type { DfeBrand } from '@/lib/sharepoint-dfe';
 import type { RunLogEntry } from '@/lib/runLogData';
+
+interface GenerateResult {
+  excelBuffer: Buffer;
+  filename:    string;
+  rawDates:    string[];
+  weekLabel:   string;
+  retailer:    string;
+  label:       string;  // 'SALES' | 'MARKETING' | ''
+  contentType?: string; // defaults to Excel if omitted
+}
 
 export async function POST(req: NextRequest) {
   let formData: FormData;
@@ -27,14 +39,15 @@ export async function POST(req: NextRequest) {
   const userEmail       = (formData.get('userEmail') as string | null)?.trim() || '';
   const sendEmail       = formData.get('sendEmail') === 'true';
   const additionalEmail = (formData.get('additionalEmail') as string | null)?.trim() || '';
+  const confirmed       = formData.get('confirmed') === 'true';
 
   if (!file || !brand || !reportId) {
     return NextResponse.json({ error: 'file, brand and reportId are required' }, { status: 400 });
   }
 
-  const fileBuffer    = Buffer.from(await file.arrayBuffer());
-  const rawFilename   = file.name;
-  const storeMap      = loadStoreMap();
+  const fileBuffer  = Buffer.from(await file.arrayBuffer());
+  const rawFilename = file.name;
+  const storeMap    = loadStoreMap();
 
   const reports    = loadReports();
   const reportDef  = reports.find(r => r.id === reportId);
@@ -42,21 +55,89 @@ export async function POST(req: NextRequest) {
 
   const timestamp = new Date().toISOString();
 
+  // ── Pre-generate analysis (skipped if user already confirmed) ───────────────
+  if (!confirmed && reportId.endsWith('-stock-count')) {
+    const { warnings, hardError } = analyzeStockCount(fileBuffer);
+    if (hardError) {
+      return NextResponse.json({ error: hardError }, { status: 422 });
+    }
+    if (warnings.length > 0) {
+      return NextResponse.json({ warnings }, { status: 200 });
+    }
+  }
+
   try {
-    let excelBuffer: Buffer;
-    let filename: string;
-    let rawDates: string[] = [];
-    let weekLabel = '';
-    let retailer  = '';
+    const results: GenerateResult[] = [];
+    void outputType; // reserved for future output-type switching
 
     if (reportId.endsWith('-stock-count')) {
-      retailer = reportId
+      const retailer = reportId
         .replace(/-stock-count$/, '')
         .replace(/-/g, ' ')
         .toUpperCase();
-      ({ buffer: excelBuffer, filename, rawDates, weekLabel } = await generateMakroStockCount(
+      const { buffer, filename, rawDates, weekLabel } = await generateMakroStockCount(
         fileBuffer, brand, storeMap, retailer,
-      ));
+      );
+      results.push({ excelBuffer: buffer, filename, rawDates, weekLabel, retailer, label: '' });
+
+    } else if (reportId.endsWith('-red-flag') || reportId === 'red-flag') {
+      // Parse problem selections from the form
+      let salesProblems:     string[] = [];
+      let marketingProblems: string[] = [];
+      try {
+        salesProblems     = JSON.parse((formData.get('salesProblems')     as string | null) || '[]');
+        marketingProblems = JSON.parse((formData.get('marketingProblems') as string | null) || '[]');
+      } catch {
+        return NextResponse.json({ error: 'Invalid problem selection data.' }, { status: 400 });
+      }
+
+      if (!salesProblems.length && !marketingProblems.length) {
+        return NextResponse.json(
+          { error: 'Select at least one problem for the Sales or Marketing report.' },
+          { status: 400 },
+        );
+      }
+
+      // Validate: check selected problems exist in the actual data
+      const dataProblems = extractRedFlagProblems(fileBuffer);
+      const validationErrors: string[] = [];
+      for (const p of salesProblems) {
+        if (!dataProblems.has(p)) {
+          validationErrors.push(`You have selected "${p}" for Sales but no lines exist in your data matching that problem.`);
+        }
+      }
+      for (const p of marketingProblems) {
+        if (!dataProblems.has(p)) {
+          validationErrors.push(`You have selected "${p}" for Marketing but no lines exist in your data matching that problem.`);
+        }
+      }
+      if (validationErrors.length) {
+        return NextResponse.json({ error: validationErrors.join('\n') }, { status: 422 });
+      }
+
+      // Generate Sales report
+      if (salesProblems.length) {
+        const { buffer, filename, rawDates } = await generateRedFlag(fileBuffer, brand, 'SALES', salesProblems);
+        results.push({ excelBuffer: buffer, filename, rawDates, weekLabel: '', retailer: '', label: 'SALES' });
+      }
+      // Generate Marketing report
+      if (marketingProblems.length) {
+        const { buffer, filename, rawDates } = await generateRedFlag(fileBuffer, brand, 'MARKETING', marketingProblems);
+        results.push({ excelBuffer: buffer, filename, rawDates, weekLabel: '', retailer: '', label: 'MARKETING' });
+      }
+
+    } else if (reportId === 'stand-report') {
+      const { buffer, filename, rawDates } = await generateStandReport(fileBuffer, brand);
+      results.push({
+        excelBuffer: buffer,
+        filename,
+        rawDates,
+        weekLabel: '',
+        retailer:  '',
+        label:     '',
+        contentType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      });
+
     } else {
       return NextResponse.json(
         { error: `Report "${reportId}" is not yet implemented.` },
@@ -65,94 +146,91 @@ export async function POST(req: NextRequest) {
     }
 
     // Capture for after() closure
-    const _excelBuffer  = excelBuffer;
+    const _results      = results;
     const _rawBuffer    = fileBuffer;
     const _rawFilename  = rawFilename;
-    const _filename     = filename;
-    const _rawDates     = rawDates;
-    const _weekLabel    = weekLabel;
-    const _retailer     = retailer;
 
     after(async () => {
-      let spPath          = '';
-      let spFolderUrl     = '';
-      let emailSent       = false;
-      let emailRecipients: string[] = [];
+      for (const result of _results) {
+        let spPath          = '';
+        let spFolderUrl     = '';
+        let emailSent       = false;
+        let emailRecipients: string[] = [];
 
-      // ── Always upload to SharePoint ──────────────────────────────────────
-      try {
-        const dfeBrand  = brand.toUpperCase() as DfeBrand;
-        const folderPath = buildDfeFolderPath(dfeBrand, _rawDates);
-        const fileWebUrl = await uploadToSharePoint(folderPath, _filename, _excelBuffer);
-        spPath      = fileWebUrl;
-        spFolderUrl = fileWebUrl.substring(0, fileWebUrl.lastIndexOf('/'));
-        // Also upload the original raw file alongside the generated report
-        await uploadToSharePoint(folderPath, _rawFilename, _rawBuffer).catch((e: unknown) => {
-          console.error('[generate] Raw file SP upload failed:', e instanceof Error ? e.message : e);
-        });
-      } catch (spErr) {
-        console.error('[generate] SP upload failed:', spErr instanceof Error ? spErr.message : spErr);
-      }
+        // Combine rawDates across all results for folder path
+        const allRawDates = _results.flatMap(r => r.rawDates);
 
-      // ── Optionally email the report ───────────────────────────────────────
-      if (sendEmail && userEmail) {
+        // ── Always upload to SharePoint ────────────────────────────────────
         try {
-          const recipients = [userEmail];
-          if (additionalEmail) recipients.push(additionalEmail);
-          const firstName = userName.split(' ')[0] || userName;
-          await sendReportEmail({
-            to:          recipients,
-            firstName,
-            reportName,
-            brand,
-            weekLabel:   _weekLabel,
-            filename:    _filename,
-            fileBuffer:  _excelBuffer,
-            spFolderUrl: spFolderUrl || spPath,
-          });
-          emailSent       = true;
-          emailRecipients = recipients;
-        } catch (mailErr) {
-          console.error('[generate] email send failed:', mailErr instanceof Error ? mailErr.message : mailErr);
+          const dfeBrand   = brand.toUpperCase() as DfeBrand;
+          const folderPath = buildDfeFolderPath(dfeBrand, allRawDates);
+          const fileWebUrl = await uploadToSharePoint(folderPath, result.filename, result.excelBuffer, result.contentType);
+          spPath      = fileWebUrl;
+          spFolderUrl = fileWebUrl.substring(0, fileWebUrl.lastIndexOf('/'));
+
+          // Upload raw file only alongside the first result (avoid duplicates)
+          if (_results.indexOf(result) === 0) {
+            await uploadToSharePoint(folderPath, _rawFilename, _rawBuffer).catch((e: unknown) => {
+              console.error('[generate] Raw file SP upload failed:', e instanceof Error ? e.message : e);
+            });
+          }
+        } catch (spErr) {
+          console.error('[generate] SP upload failed:', spErr instanceof Error ? spErr.message : spErr);
+        }
+
+        // ── Optionally email the report ────────────────────────────────────
+        if (sendEmail && userEmail) {
+          try {
+            const recipients = [userEmail];
+            if (additionalEmail) recipients.push(additionalEmail);
+            const firstName  = userName.split(' ')[0] || userName;
+            const label      = result.label ? `${result.label} ` : '';
+            await sendReportEmail({
+              to:          recipients,
+              firstName,
+              reportName:  `${label}${reportName}`,
+              brand,
+              weekLabel:   result.weekLabel,
+              filename:    result.filename,
+              fileBuffer:  result.excelBuffer,
+              spFolderUrl: spFolderUrl || spPath,
+            });
+            emailSent       = true;
+            emailRecipients = recipients;
+          } catch (mailErr) {
+            console.error('[generate] email send failed:', mailErr instanceof Error ? mailErr.message : mailErr);
+          }
+        }
+
+        // ── Log the run ────────────────────────────────────────────────────
+        const entry: RunLogEntry = {
+          id: randomUUID(),
+          timestamp,
+          userName,
+          userEmail,
+          reportId,
+          reportName: result.label ? `${result.label} ${reportName}` : reportName,
+          brand,
+          retailer:   result.retailer,
+          filename:   result.filename,
+          status:     'success',
+          spPath:     spPath || undefined,
+          emailSent,
+          emailRecipients: emailSent ? emailRecipients : undefined,
+        };
+        await addRunEntry(entry);
+
+        const adminEmails = loadUsers()
+          .filter(u => u.isAdmin)
+          .map(u => u.email);
+        if (adminEmails.length) {
+          await sendRunNotification(adminEmails, entry).catch(() => { /* non-fatal */ });
         }
       }
-
-      // ── Log the run ───────────────────────────────────────────────────────
-      const entry: RunLogEntry = {
-        id: randomUUID(),
-        timestamp,
-        userName,
-        userEmail,
-        reportId,
-        reportName,
-        brand,
-        retailer: _retailer,
-        filename: _filename,
-        status:   'success',
-        spPath:   spPath || undefined,
-        emailSent,
-        emailRecipients: emailSent ? emailRecipients : undefined,
-      };
-      await addRunEntry(entry);
-
-      const adminEmails = loadUsers()
-        .filter(u => u.isAdmin)
-        .map(u => u.email);
-      if (adminEmails.length) {
-        await sendRunNotification(adminEmails, entry).catch(() => { /* non-fatal */ });
-      }
     });
 
-    const mimeType = outputType === 'PPT'
-      ? 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
-      : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    return NextResponse.json({ success: true, filenames: results.map(r => r.filename) });
 
-    return new Response(new Uint8Array(excelBuffer), {
-      headers: {
-        'Content-Type': mimeType,
-        'Content-Disposition': `attachment; filename="${filename}"`,
-      },
-    });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     console.error('[generate]', message);

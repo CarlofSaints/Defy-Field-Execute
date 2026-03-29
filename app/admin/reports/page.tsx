@@ -28,7 +28,7 @@ interface RunLogEntry {
   emailRecipients?: string[];
 }
 
-const ALL_BRANDS      = ['Defy', 'Beko', 'Grundig'];
+const ALL_BRANDS      = ['Defy', 'Beko'];
 const ALL_OUTPUT_TYPES = ['Excel', 'PPT'];
 
 type Toast = { message: string; type: 'success' | 'error' };
@@ -81,6 +81,11 @@ export default function AdminReportsPage() {
   const [storeMapCount,      setStoreMapCount]      = useState<number | null>(null);
   const [storeMapUploading,  setStoreMapUploading]  = useState(false);
 
+  // App Settings — SP image path
+  const [picturesPath,        setPicturesPath]        = useState('');
+  const [picturesPathSaving,  setPicturesPathSaving]  = useState(false);
+  const [picturesPathLoaded,  setPicturesPathLoaded]  = useState(false);
+
   // Run Log
   const [runLog,        setRunLog]        = useState<RunLogEntry[]>([]);
   const [runLogLoading, setRunLogLoading] = useState(false);
@@ -89,7 +94,7 @@ export default function AdminReportsPage() {
   // Add form
   const [addName,        setAddName]        = useState('');
   const [addOutputTypes, setAddOutputTypes] = useState<string[]>(['Excel']);
-  const [addBrands,      setAddBrands]      = useState<string[]>(['Defy', 'Beko', 'Grundig']);
+  const [addBrands,      setAddBrands]      = useState<string[]>(['Defy', 'Beko']);
   const [addLoading,     setAddLoading]     = useState(false);
 
   // Edit modal
@@ -115,6 +120,15 @@ export default function AdminReportsPage() {
     }
   }, []);
 
+  const loadAppSettings = useCallback(async () => {
+    const res = await fetch('/api/app-settings');
+    if (res.ok) {
+      const data = await res.json();
+      setPicturesPath(data.picturesFolderPath ?? '');
+      setPicturesPathLoaded(true);
+    }
+  }, []);
+
   const loadRunLogData = useCallback(async () => {
     setRunLogLoading(true);
     const res = await fetch('/api/run-log');
@@ -126,7 +140,24 @@ export default function AdminReportsPage() {
     loadReports();
     loadStoreMapCount();
     loadRunLogData();
-  }, [loadReports, loadStoreMapCount, loadRunLogData]);
+    loadAppSettings();
+  }, [loadReports, loadStoreMapCount, loadRunLogData, loadAppSettings]);
+
+  async function handleSavePicturesPath() {
+    setPicturesPathSaving(true);
+    const res = await fetch('/api/app-settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ picturesFolderPath: picturesPath }),
+    });
+    setPicturesPathSaving(false);
+    if (res.ok) {
+      notify('Image folder path saved');
+    } else {
+      const { error } = await res.json().catch(() => ({ error: 'Save failed' }));
+      notify(error || 'Save failed', 'error');
+    }
+  }
 
   async function handleStoreMapUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -165,7 +196,7 @@ export default function AdminReportsPage() {
       notify('Report added');
       setAddName('');
       setAddOutputTypes(['Excel']);
-      setAddBrands(['Defy', 'Beko', 'Grundig']);
+      setAddBrands(['Defy', 'Beko']);
       loadReports();
     } else {
       const { error } = await res.json();
@@ -511,6 +542,43 @@ export default function AdminReportsPage() {
                 />
               </label>
             </div>
+          </div>
+        </div>
+
+        {/* Red Flag Image Folder */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="border-l-4 border-[#E31837] px-6 py-4">
+            <h2 className="font-semibold text-gray-800">Red Flag Image Folder</h2>
+            <p className="text-sm text-gray-500 mt-0.5">
+              SharePoint path to the folder where red-flag images are stored. Leave blank to use the default.
+            </p>
+          </div>
+          <div className="px-6 pb-6 space-y-3">
+            <p className="text-xs text-gray-500">
+              Default: <span className="font-mono bg-gray-100 px-1 rounded">
+                {process.env.NEXT_PUBLIC_DFE_SP_BASE_PATH
+                  ? `${process.env.NEXT_PUBLIC_DFE_SP_BASE_PATH}/PERIGEE IMAGE DOWNLOADS`
+                  : 'DEFY/PERIGEE - FG/2. EXTERNAL SYNC/REPORTS/PERIGEE IMAGE DOWNLOADS'}
+              </span>
+            </p>
+
+            <input
+              type="text"
+              value={picturesPathLoaded ? picturesPath : ''}
+              onChange={e => setPicturesPath(e.target.value)}
+              placeholder="e.g. DEFY/PERIGEE - FG/2. EXTERNAL SYNC/REPORTS/PERIGEE IMAGE DOWNLOADS"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#E31837]/30 focus:border-[#E31837]"
+              disabled={!picturesPathLoaded}
+            />
+
+            <button
+              type="button"
+              onClick={handleSavePicturesPath}
+              disabled={picturesPathSaving || !picturesPathLoaded}
+              className="bg-[#E31837] hover:bg-[#c01430] text-white px-5 py-2 rounded-lg text-sm font-semibold disabled:opacity-50"
+            >
+              {picturesPathSaving ? 'Saving…' : 'Save Path'}
+            </button>
           </div>
         </div>
 

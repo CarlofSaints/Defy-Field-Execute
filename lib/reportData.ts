@@ -5,7 +5,7 @@ export interface ReportDef {
   id: string;
   name: string;
   outputTypes: string[]; // 'Excel' | 'PPT'
-  brands: string[];      // 'Defy' | 'Beko' | 'Grundig'
+  brands: string[];      // 'Defy' | 'Beko'
 }
 
 const FILE = path.join(process.cwd(), 'data', 'reports.json');
@@ -14,17 +14,15 @@ let _cache: ReportDef[] | null = null;
 export function loadReports(): ReportDef[] {
   if (_cache !== null) return _cache;
 
-  const env = process.env.DFE_REPORTS_JSON;
-  if (process.env.VERCEL && env) {
-    _cache = JSON.parse(env);
-    return _cache!;
-  }
-
+  // Always prefer the bundled file — it is readable on Vercel serverless functions
+  // and is the canonical source of truth (env var is stale after Admin Centre changes).
   if (fs.existsSync(FILE)) {
     _cache = JSON.parse(fs.readFileSync(FILE, 'utf-8'));
     return _cache!;
   }
 
+  // Fallback for edge cases where the file isn't bundled
+  const env = process.env.DFE_REPORTS_JSON;
   if (env) {
     _cache = JSON.parse(env);
     return _cache!;

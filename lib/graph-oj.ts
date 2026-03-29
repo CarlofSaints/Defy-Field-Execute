@@ -8,6 +8,8 @@ const SP_LIBRARY = (process.env.OJ_SP_LIBRARY || 'Shared Documents').trim();
 
 let _token: string | null = null;
 let _tokenExpiry = 0;
+let _siteId: string | null = null;
+let _driveId: string | null = null;
 
 async function getToken(): Promise<string> {
   if (_token && Date.now() < _tokenExpiry - 60_000) return _token;
@@ -33,6 +35,7 @@ async function getToken(): Promise<string> {
 }
 
 async function getSiteId(): Promise<string> {
+  if (_siteId) return _siteId;
   const token = await getToken();
   const res = await fetch(
     `https://graph.microsoft.com/v1.0/sites/${SP_HOST}:/`,
@@ -40,10 +43,12 @@ async function getSiteId(): Promise<string> {
   );
   if (!res.ok) throw new Error(`getSiteId error: ${await res.text()}`);
   const data = await res.json();
-  return data.id;
+  _siteId = data.id as string;
+  return _siteId;
 }
 
 async function getDriveId(siteId: string): Promise<string> {
+  if (_driveId) return _driveId;
   const token = await getToken();
   const res = await fetch(
     `https://graph.microsoft.com/v1.0/sites/${siteId}/drives`,
@@ -55,7 +60,8 @@ async function getDriveId(siteId: string): Promise<string> {
     d => d.name === SP_LIBRARY
   );
   if (!drive) throw new Error(`Drive "${SP_LIBRARY}" not found`);
-  return drive.id;
+  _driveId = drive.id;
+  return _driveId;
 }
 
 /**
@@ -91,6 +97,31 @@ export async function uploadToSharePoint(
   if (!res.ok) throw new Error(`SP upload error: ${await res.text()}`);
   const data = await res.json();
   return data.webUrl as string;
+}
+
+/**
+ * Download a file from SharePoint. Returns null if the file is not found or
+ * on any error (so callers can gracefully fall back).
+ */
+export async function downloadFileFromSP(
+  folderPath: string,
+  filename:   string,
+): Promise<Buffer | null> {
+  try {
+    const token   = await getToken();
+    const siteId  = await getSiteId();
+    const driveId = await getDriveId(siteId);
+
+    const encodedPath = folderPath.split('/').map(p => encodeURIComponent(p)).join('/');
+    const encodedFile = encodeURIComponent(filename);
+    const url = `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodedPath}/${encodedFile}:/content`;
+
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) return null;
+    return Buffer.from(await res.arrayBuffer());
+  } catch {
+    return null;
+  }
 }
 
 /**

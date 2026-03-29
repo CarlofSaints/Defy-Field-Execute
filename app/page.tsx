@@ -11,7 +11,7 @@ interface ReportDef {
   brands: string[];
 }
 
-const ALL_BRANDS = ['Defy', 'Beko', 'Grundig'];
+const ALL_BRANDS = ['Defy', 'Beko'];
 
 // ─── Brand pill (multi-select) ───────────────────────────────────────────────
 function BrandPill({ label, selected, onClick }: { label: string; selected: boolean; onClick: () => void }) {
@@ -217,20 +217,105 @@ function StepBadge({ n, done }: { n: number; done: boolean }) {
   );
 }
 
+// ─── Multi-select problem dropdown ───────────────────────────────────────────
+function ProblemMultiSelect({
+  problems,
+  selected,
+  onChange,
+  placeholder,
+}: {
+  problems:    string[];
+  selected:    string[];
+  onChange:    (v: string[]) => void;
+  placeholder: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref             = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const toggle = (p: string) =>
+    onChange(selected.includes(p) ? selected.filter(x => x !== p) : [...selected, p]);
+
+  const selectAll   = () => onChange([...problems]);
+  const deselectAll = () => onChange([]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className={`w-full flex items-center justify-between px-4 py-2.5 rounded-xl border-2 text-sm transition-all bg-white ${
+          open ? 'border-[#E31837] ring-2 ring-[#E31837]/20' : 'border-gray-200 hover:border-gray-300'
+        }`}
+      >
+        <span className={selected.length > 0 ? 'text-gray-900 font-medium' : 'text-gray-400'}>
+          {selected.length === 0
+            ? placeholder
+            : `${selected.length} of ${problems.length} problem${problems.length === 1 ? '' : 's'} selected`}
+        </span>
+        <svg
+          className={`w-4 h-4 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`}
+          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-xl z-20 overflow-hidden">
+          {/* Quick actions */}
+          <div className="flex gap-3 px-4 py-2 border-b border-gray-100 bg-gray-50">
+            <button type="button" onClick={selectAll}   className="text-xs text-[#E31837] font-medium hover:underline">Select all</button>
+            <button type="button" onClick={deselectAll} className="text-xs text-gray-500 font-medium hover:underline">Clear</button>
+          </div>
+          {/* Options */}
+          <div className="max-h-56 overflow-y-auto">
+            {problems.map(p => (
+              <label key={p} className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-red-50 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={selected.includes(p)}
+                  onChange={() => toggle(p)}
+                  className="accent-[#E31837] w-4 h-4 shrink-0"
+                />
+                <span className="text-sm text-gray-700">{p}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const { session, loading, logout } = useAuth();
 
-  const [reports,         setReports]         = useState<ReportDef[]>([]);
-  const [brands,          setBrands]          = useState<string[]>(['Defy']);
-  const [report,          setReport]          = useState<ReportDef | null>(null);
-  const [outputType,      setOutputType]      = useState<string>('Excel');
-  const [file,            setFile]            = useState<File | null>(null);
-  const [sendEmail,       setSendEmail]       = useState(false);
-  const [additionalEmail, setAdditionalEmail] = useState('');
-  const [generating,      setGenerating]      = useState(false);
-  const [error,           setError]           = useState<string | null>(null);
-  const [success,         setSuccess]         = useState<string | null>(null);
+  const [reports,           setReports]           = useState<ReportDef[]>([]);
+  const [brands,            setBrands]            = useState<string[]>(['Defy']);
+  const [report,            setReport]            = useState<ReportDef | null>(null);
+  const [outputType,        setOutputType]        = useState<string>('Excel');
+  const [file,              setFile]              = useState<File | null>(null);
+  const [sendEmail,         setSendEmail]         = useState(false);
+  const [additionalEmail,   setAdditionalEmail]   = useState('');
+  const [generating,        setGenerating]        = useState(false);
+  const [error,             setError]             = useState<string | null>(null);
+  const [success,           setSuccess]           = useState<string | null>(null);
+  const [warnings,          setWarnings]          = useState<string[] | null>(null);
+
+  // Red flag problem distribution
+  const [problems,          setProblems]          = useState<string[]>([]);
+  const [salesProblems,     setSalesProblems]     = useState<string[]>([]);
+  const [marketingProblems, setMarketingProblems] = useState<string[]>([]);
+  const [problemsLoading,   setProblemsLoading]   = useState(false);
 
   const loadReports = useCallback(async () => {
     const res = await fetch('/api/reports');
@@ -238,6 +323,39 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => { loadReports(); }, [loadReports]);
+
+  // Derived: is the selected report a red flag report?
+  const isRedFlag = !!report && (report.id.endsWith('-red-flag') || report.id === 'red-flag');
+
+  // When red flag + file changes, parse problem list from the file
+  useEffect(() => {
+    if (!isRedFlag || !file) {
+      setProblems([]);
+      setSalesProblems([]);
+      setMarketingProblems([]);
+      return;
+    }
+    let cancelled = false;
+    async function parse() {
+      setProblemsLoading(true);
+      setSalesProblems([]);
+      setMarketingProblems([]);
+      try {
+        const fd = new FormData();
+        fd.append('file', file!);
+        const res = await fetch('/api/parse-problems', { method: 'POST', body: fd });
+        if (!cancelled && res.ok) {
+          const { problems: parsed } = await res.json() as { problems: string[] };
+          setProblems(parsed);
+        }
+      } finally {
+        if (!cancelled) setProblemsLoading(false);
+      }
+    }
+    parse();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRedFlag, file]);
 
   // When a report is selected, default outputType to its first option
   useEffect(() => {
@@ -254,49 +372,55 @@ export default function DashboardPage() {
     r.brands.some(b => brands.includes(b))
   );
 
-  async function handleGenerate() {
+  async function handleGenerate(confirmed = false) {
     setError(null);
     setSuccess(null);
+    if (!confirmed) setWarnings(null);
 
     if (!brands.length) { setError('Select at least one brand.'); return; }
     if (!report)        { setError('Select a report type.'); return; }
     if (!file)          { setError('Upload a raw data file.'); return; }
 
+    if (isRedFlag) {
+      if (problemsLoading) { setError('Still parsing problems from the file — please wait.'); return; }
+      if (!salesProblems.length && !marketingProblems.length) {
+        setError('Select at least one problem for the Sales or Marketing report.');
+        return;
+      }
+    }
+
     setGenerating(true);
 
     const fd = new FormData();
     fd.append('file', file);
-    fd.append('brand', brands[0]); // primary brand
+    fd.append('brand', brands[0]);
     fd.append('reportId', report.id);
     fd.append('outputType', outputType);
     fd.append('userName',  session?.name  ?? '');
     fd.append('userEmail', session?.email ?? '');
     fd.append('sendEmail', sendEmail ? 'true' : 'false');
     if (sendEmail && additionalEmail) fd.append('additionalEmail', additionalEmail);
+    if (confirmed) fd.append('confirmed', 'true');
+    if (isRedFlag) {
+      fd.append('salesProblems',     JSON.stringify(salesProblems));
+      fd.append('marketingProblems', JSON.stringify(marketingProblems));
+    }
 
     try {
-      const res = await fetch('/api/generate', { method: 'POST', body: fd });
+      const res  = await fetch('/api/generate', { method: 'POST', body: fd });
+      const body = await res.json().catch(() => ({ error: 'Unknown error' }));
 
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({ error: 'Unknown error' }));
-        throw new Error(body.error || `Server error ${res.status}`);
+      if (!res.ok) throw new Error(body.error || `Server error ${res.status}`);
+
+      // 200 with warnings — show confirmation card
+      if (body.warnings?.length) {
+        setWarnings(body.warnings as string[]);
+        return;
       }
 
-      const disposition = res.headers.get('Content-Disposition') ?? '';
-      const match = disposition.match(/filename="([^"]+)"/);
-      const filename = match?.[1] ?? 'report.xlsx';
-
-      const blob = await res.blob();
-      const url  = URL.createObjectURL(blob);
-      const a    = document.createElement('a');
-      a.href     = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-
-      setSuccess(`${filename} downloaded successfully.`);
+      const names: string[] = body.filenames ?? (body.filename ? [body.filename as string] : []);
+      setSuccess(`${names.join(' + ')} saved to SharePoint${sendEmail ? ' and sent by email' : ''}.`);
+      setWarnings(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to generate report.');
     } finally {
@@ -328,7 +452,7 @@ export default function DashboardPage() {
         {/* Page title */}
         <div className="text-center mb-2">
           <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Generate Report</h1>
-          <p className="text-gray-500 text-sm mt-1">Select your filters, upload the Perigee export, and download the formatted report.</p>
+          <p className="text-gray-500 text-sm mt-1">Select your filters, upload the Perigee export, and save the formatted report to SharePoint.</p>
         </div>
 
         {/* ── Step 1: Brands ──────────────────────────────────────────────── */}
@@ -398,6 +522,99 @@ export default function DashboardPage() {
           <DropZone file={file} onChange={setFile} />
         </div>
 
+        {/* ── Red Flag: Problem distribution ───────────────────────────────── */}
+        {isRedFlag && (
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 bg-[#E31837]">
+                <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4M4 17h12M4 17l4 4M4 17l4-4" />
+                </svg>
+              </div>
+              <div>
+                <p className="font-semibold text-gray-900 text-sm">Split Problems by Team</p>
+                <p className="text-xs text-gray-400">Assign each problem type to the Sales and/or Marketing report</p>
+              </div>
+            </div>
+
+            {!file ? (
+              <p className="text-sm text-gray-400">Upload a file above to see the available problems.</p>
+            ) : problemsLoading ? (
+              <p className="text-sm text-gray-400 flex items-center gap-2">
+                <svg className="animate-spin w-4 h-4 text-[#E31837]" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                Parsing problems from file…
+              </p>
+            ) : problems.length === 0 ? (
+              <p className="text-sm text-amber-600">No problem values found in the uploaded file. Check that column P is populated.</p>
+            ) : (
+              <div className="space-y-5">
+                {/* Sales */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-semibold text-blue-700 uppercase tracking-wide">Sales Red Flag</label>
+                    {salesProblems.length > 0 && (
+                      <span className="text-xs text-gray-400">{salesProblems.length} selected</span>
+                    )}
+                  </div>
+                  <ProblemMultiSelect
+                    problems={problems}
+                    selected={salesProblems}
+                    onChange={setSalesProblems}
+                    placeholder="Select problems for the sales report…"
+                  />
+                  {salesProblems.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {salesProblems.map(p => (
+                        <span key={p} className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs font-medium">{p}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Marketing */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-semibold text-orange-700 uppercase tracking-wide">Marketing Red Flag</label>
+                    {marketingProblems.length > 0 && (
+                      <span className="text-xs text-gray-400">{marketingProblems.length} selected</span>
+                    )}
+                  </div>
+                  <ProblemMultiSelect
+                    problems={problems}
+                    selected={marketingProblems}
+                    onChange={setMarketingProblems}
+                    placeholder="Select problems for the marketing report…"
+                  />
+                  {marketingProblems.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {marketingProblems.map(p => (
+                        <span key={p} className="px-2 py-0.5 bg-orange-50 text-orange-700 rounded text-xs font-medium">{p}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Hint: problems not assigned to either */}
+                {(() => {
+                  const unassigned = problems.filter(
+                    p => !salesProblems.includes(p) && !marketingProblems.includes(p),
+                  );
+                  if (!unassigned.length) return null;
+                  return (
+                    <p className="text-xs text-amber-600">
+                      {unassigned.length} problem{unassigned.length === 1 ? '' : 's'} not yet assigned to either report:&nbsp;
+                      <span className="font-medium">{unassigned.join(', ')}</span>
+                    </p>
+                  );
+                })()}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ── Step 5: Delivery ─────────────────────────────────────────────── */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
           <div className="flex items-center gap-3 mb-4">
@@ -450,6 +667,47 @@ export default function DashboardPage() {
           )}
         </div>
 
+        {/* ── Warnings confirmation card ───────────────────────────────────── */}
+        {warnings && (
+          <div className="bg-amber-50 border border-amber-300 rounded-xl px-4 py-4 space-y-3">
+            <div className="flex items-start gap-2">
+              <svg className="w-5 h-5 mt-0.5 shrink-0 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+              </svg>
+              <div>
+                <p className="font-semibold text-amber-800 text-sm">Data warnings detected</p>
+                <p className="text-xs text-amber-700 mt-0.5">The report can still be generated, but some data may be incomplete. Review the issues below before continuing.</p>
+              </div>
+            </div>
+            <ul className="space-y-1.5 pl-2">
+              {warnings.map((w, i) => (
+                <li key={i} className="flex items-start gap-2 text-sm text-amber-900">
+                  <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
+                  {w}
+                </li>
+              ))}
+            </ul>
+            <div className="flex gap-3 pt-1">
+              <button
+                type="button"
+                onClick={() => handleGenerate(true)}
+                disabled={generating}
+                className="px-5 py-2 rounded-xl bg-[#E31837] hover:bg-[#c01430] disabled:bg-gray-200 disabled:text-gray-400 text-white text-sm font-semibold transition-all"
+              >
+                {generating ? 'Generating…' : 'Continue anyway'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setWarnings(null)}
+                disabled={generating}
+                className="px-5 py-2 rounded-xl border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 text-sm font-semibold transition-all"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* ── Errors / Success ─────────────────────────────────────────────── */}
         {error && (
           <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm flex items-start gap-2">
@@ -471,8 +729,11 @@ export default function DashboardPage() {
         {/* ── Generate button ───────────────────────────────────────────────── */}
         <button
           type="button"
-          onClick={handleGenerate}
-          disabled={generating || !brands.length || !report || !file}
+          onClick={() => handleGenerate()}
+          disabled={
+            generating || !brands.length || !report || !file ||
+            (isRedFlag && (problemsLoading || (!salesProblems.length && !marketingProblems.length)))
+          }
           className="w-full bg-[#E31837] hover:bg-[#c01430] disabled:bg-gray-200 disabled:text-gray-400 text-white font-bold py-3.5 rounded-2xl text-base transition-all shadow-sm disabled:shadow-none"
         >
           {generating ? (
