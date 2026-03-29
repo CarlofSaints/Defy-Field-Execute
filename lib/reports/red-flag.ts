@@ -274,15 +274,7 @@ export async function generateRedFlag(
 
       r.eachCell(cell => applyDataStyle(cell, i % 2 === 1));
 
-      // Always write a clickable hyperlink in the PICTURE cell
-      if (row.imageUrl) {
-        const picCell = r.getCell(PIC_COL);
-        picCell.value = { text: '🔗 View', hyperlink: row.imageUrl, tooltip: 'View image on Perigee portal' };
-        picCell.font  = { color: { argb: '0563C1' }, underline: true, size: 9, name: 'Arial' };
-        picCell.alignment = { vertical: 'bottom', horizontal: 'left' };
-      }
-
-      // Embed image if we fetched it from SP
+      // Embed image with clickable hyperlink, or fall back to text link
       const imgBuf = imageBuffers.get(row.imageId);
       if (imgBuf) {
         try {
@@ -291,11 +283,18 @@ export async function generateRedFlag(
           ws.addImage(imgId, {
             tl:  { col: PIC_COL_0, row: i + 2 + 0.05 },
             ext: { width: IMAGE_W, height: IMAGE_H },
+            hyperlinks: { hyperlink: row.imageUrl, tooltip: 'Click to view full image' },
           });
           r.height = ROW_H_IMAGE;
         } catch {
           r.height = ROW_H_PLAIN;
         }
+      } else if (row.imageUrl) {
+        const picCell = r.getCell(PIC_COL);
+        picCell.value = { text: '🔗 View', hyperlink: row.imageUrl, tooltip: 'View image on Perigee portal' };
+        picCell.font  = { color: { argb: '0563C1' }, underline: true, size: 9, name: 'Arial' };
+        picCell.alignment = { vertical: 'bottom', horizontal: 'left' };
+        r.height = ROW_H_PLAIN;
       } else {
         r.height = ROW_H_PLAIN;
       }

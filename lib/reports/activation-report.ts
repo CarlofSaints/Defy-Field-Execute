@@ -282,12 +282,7 @@ export async function generateActivationReport(
 
       const picCell = r.getCell(colIdx1);
 
-      // Always write a fallback hyperlink
-      picCell.value = { text: '\u{1F517} View', hyperlink: url, tooltip: 'View image on Perigee portal' };
-      picCell.font  = { color: { argb: '0563C1' }, underline: true, size: 9, name: 'Arial' };
-      picCell.alignment = { vertical: 'bottom', horizontal: 'left' };
-
-      // Embed from SP if available
+      // Embed from SP if available — with clickable hyperlink on the image
       const imageId = row.imageIds[slot];
       const imgBuf  = imageBuffers.get(imageId);
       if (imgBuf) {
@@ -297,9 +292,17 @@ export async function generateActivationReport(
           ws.addImage(imgId, {
             tl:  { col: colIdx0, row: i + 2 + 0.05 },
             ext: { width: IMAGE_W, height: IMAGE_H },
+            hyperlinks: { hyperlink: url, tooltip: 'Click to view full image' },
           });
           anyImageEmbedded = true;
         } catch { /* skip */ }
+      }
+
+      // Fallback: if image not embedded, show a clickable text link
+      if (!imgBuf) {
+        picCell.value = { text: '\u{1F517} View', hyperlink: url, tooltip: 'View image on Perigee portal' };
+        picCell.font  = { color: { argb: '0563C1' }, underline: true, size: 9, name: 'Arial' };
+        picCell.alignment = { vertical: 'bottom', horizontal: 'left' };
       }
     });
 
