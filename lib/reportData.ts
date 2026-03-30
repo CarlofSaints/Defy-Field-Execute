@@ -4,9 +4,26 @@ import path from 'path';
 export interface ReportDef {
   id: string;
   name: string;
+  dataFormat: string;    // which builder to use: stock-count, red-flag, stand-report, etc.
+  channel?: string;      // optional retailer/channel: MAKRO, GAME, etc.
   outputTypes: string[]; // 'Excel' | 'PPT'
   brands: string[];      // 'Defy' | 'Beko'
 }
+
+/** All available data formats — maps to report builders in generate route */
+export const DATA_FORMATS = [
+  { value: 'stock-count',        label: 'Stock Count' },
+  { value: 'red-flag',           label: 'Red Flag' },
+  { value: 'stand-report',       label: 'Stand Report' },
+  { value: 'service-call',       label: 'Service Call' },
+  { value: 'training-feedback',  label: 'Training Feedback' },
+  { value: 'activation-report',  label: 'Activation Report' },
+] as const;
+
+/** Human-readable label for a data format value */
+export const DATA_FORMAT_LABELS: Record<string, string> = Object.fromEntries(
+  DATA_FORMATS.map(f => [f.value, f.label]),
+);
 
 const FILE = path.join(process.cwd(), 'data', 'reports.json');
 let _cache: ReportDef[] | null = null;

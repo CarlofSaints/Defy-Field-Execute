@@ -7,6 +7,8 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 interface ReportDef {
   id: string;
   name: string;
+  dataFormat: string;
+  channel?: string;
   outputTypes: string[];
   brands: string[];
 }
@@ -326,7 +328,7 @@ export default function DashboardPage() {
   useEffect(() => { loadReports(); }, [loadReports]);
 
   // Derived: is the selected report a red flag report?
-  const isRedFlag = !!report && (report.id.endsWith('-red-flag') || report.id === 'red-flag');
+  const isRedFlag = !!report && report.dataFormat === 'red-flag';
 
   // When red flag + file changes, parse problem list from the file
   useEffect(() => {

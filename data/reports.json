@@ -1,13 +1,13 @@
 [
-  { "id": "makro-stock-count", "name": "MAKRO STOCK COUNT", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] },
-  { "id": "game-stock-count", "name": "GAME STOCK COUNT", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] },
-  { "id": "hirsch-stock-count", "name": "HIRSCH STOCK COUNT", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] },
-  { "id": "tafelberg-stock-count", "name": "TAFELBERG STOCK COUNT", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] },
-  { "id": "independent-stock-count", "name": "INDEPENDENT STOCK COUNT", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] },
-  { "id": "service-call-report", "name": "SERVICE CALL REPORT", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] },
-  { "id": "red-flag", "name": "RED FLAG REPORT", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] },
-  { "id": "training-feedback-report", "name": "TRAINING FEEDBACK REPORT", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] },
-  { "id": "stand-report", "name": "STAND REPORT", "outputTypes": ["PPT"], "brands": ["Defy", "Beko"] },
-  { "id": "training-feedback-form", "name": "TRAINING FEEDBACK FORM", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] },
-  { "id": "activation-report", "name": "ACTIVATION REPORT", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] }
+  { "id": "makro-stock-count", "name": "MAKRO STOCK COUNT", "dataFormat": "stock-count", "channel": "MAKRO", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] },
+  { "id": "game-stock-count", "name": "GAME STOCK COUNT", "dataFormat": "stock-count", "channel": "GAME", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] },
+  { "id": "hirsch-stock-count", "name": "HIRSCH STOCK COUNT", "dataFormat": "stock-count", "channel": "HIRSCH", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] },
+  { "id": "tafelberg-stock-count", "name": "TAFELBERG STOCK COUNT", "dataFormat": "stock-count", "channel": "TAFELBERG", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] },
+  { "id": "independent-stock-count", "name": "INDEPENDENT STOCK COUNT", "dataFormat": "stock-count", "channel": "INDEPENDENT", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] },
+  { "id": "service-call-report", "name": "SERVICE CALL REPORT", "dataFormat": "service-call", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] },
+  { "id": "red-flag", "name": "RED FLAG REPORT", "dataFormat": "red-flag", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] },
+  { "id": "training-feedback-report", "name": "TRAINING FEEDBACK REPORT", "dataFormat": "training-feedback", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] },
+  { "id": "stand-report", "name": "STAND REPORT", "dataFormat": "stand-report", "outputTypes": ["PPT"], "brands": ["Defy", "Beko"] },
+  { "id": "training-feedback-form", "name": "TRAINING FEEDBACK FORM", "dataFormat": "training-feedback", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] },
+  { "id": "activation-report", "name": "ACTIVATION REPORT", "dataFormat": "activation-report", "outputTypes": ["Excel"], "brands": ["Defy", "Beko"] }
 ]

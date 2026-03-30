@@ -7,9 +7,20 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 interface ReportDef {
   id: string;
   name: string;
+  dataFormat: string;
+  channel?: string;
   outputTypes: string[];
   brands: string[];
 }
+
+const DATA_FORMATS = [
+  { value: 'stock-count',        label: 'Stock Count' },
+  { value: 'red-flag',           label: 'Red Flag' },
+  { value: 'stand-report',       label: 'Stand Report' },
+  { value: 'service-call',       label: 'Service Call' },
+  { value: 'training-feedback',  label: 'Training Feedback' },
+  { value: 'activation-report',  label: 'Activation Report' },
+];
 
 interface RunLogEntry {
   id:               string;
@@ -93,6 +104,8 @@ export default function AdminReportsPage() {
 
   // Add form
   const [addName,        setAddName]        = useState('');
+  const [addDataFormat,  setAddDataFormat]  = useState('');
+  const [addChannel,     setAddChannel]     = useState('');
   const [addOutputTypes, setAddOutputTypes] = useState<string[]>(['Excel']);
   const [addBrands,      setAddBrands]      = useState<string[]>(['Defy', 'Beko']);
   const [addLoading,     setAddLoading]     = useState(false);
@@ -100,6 +113,8 @@ export default function AdminReportsPage() {
   // Edit modal
   const [editReport,      setEditReport]      = useState<ReportDef | null>(null);
   const [editName,        setEditName]        = useState('');
+  const [editDataFormat,  setEditDataFormat]  = useState('');
+  const [editChannel,     setEditChannel]     = useState('');
   const [editOutputTypes, setEditOutputTypes] = useState<string[]>([]);
   const [editBrands,      setEditBrands]      = useState<string[]>([]);
   const [editLoading,     setEditLoading]     = useState(false);
@@ -181,20 +196,28 @@ export default function AdminReportsPage() {
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
-    if (!addName.trim() || !addOutputTypes.length || !addBrands.length) {
-      notify('Fill in all fields', 'error');
+    if (!addName.trim() || !addDataFormat || !addOutputTypes.length || !addBrands.length) {
+      notify('Fill in all fields (name, data format, output type, brands)', 'error');
       return;
     }
     setAddLoading(true);
     const res = await fetch('/api/reports', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: addName.trim(), outputTypes: addOutputTypes, brands: addBrands }),
+      body: JSON.stringify({
+        name: addName.trim(),
+        dataFormat: addDataFormat,
+        channel: addChannel.trim() || undefined,
+        outputTypes: addOutputTypes,
+        brands: addBrands,
+      }),
     });
     setAddLoading(false);
     if (res.ok) {
       notify('Report added');
       setAddName('');
+      setAddDataFormat('');
+      setAddChannel('');
       setAddOutputTypes(['Excel']);
       setAddBrands(['Defy', 'Beko']);
       loadReports();
@@ -207,21 +230,29 @@ export default function AdminReportsPage() {
   function openEdit(r: ReportDef) {
     setEditReport(r);
     setEditName(r.name);
+    setEditDataFormat(r.dataFormat || '');
+    setEditChannel(r.channel || '');
     setEditOutputTypes([...r.outputTypes]);
     setEditBrands([...r.brands]);
   }
 
   async function handleEdit(e: React.FormEvent) {
     e.preventDefault();
-    if (!editReport || !editName.trim() || !editOutputTypes.length || !editBrands.length) {
-      notify('Fill in all fields', 'error');
+    if (!editReport || !editName.trim() || !editDataFormat || !editOutputTypes.length || !editBrands.length) {
+      notify('Fill in all fields (name, data format, output type, brands)', 'error');
       return;
     }
     setEditLoading(true);
     const res = await fetch(`/api/reports/${editReport.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: editName.trim(), outputTypes: editOutputTypes, brands: editBrands }),
+      body: JSON.stringify({
+        name: editName.trim(),
+        dataFormat: editDataFormat,
+        channel: editChannel.trim() || '',
+        outputTypes: editOutputTypes,
+        brands: editBrands,
+      }),
     });
     setEditLoading(false);
     if (res.ok) {
@@ -294,6 +325,35 @@ export default function AdminReportsPage() {
               />
             </div>
 
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">
+                  Data Format <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={addDataFormat}
+                  onChange={e => setAddDataFormat(e.target.value)}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#E31837]/30 focus:border-[#E31837] bg-white"
+                >
+                  <option value="">Select format…</option>
+                  {DATA_FORMATS.map(f => (
+                    <option key={f.value} value={f.value}>{f.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">
+                  Channel <span className="text-gray-400 font-normal normal-case">(optional)</span>
+                </label>
+                <input
+                  value={addChannel}
+                  onChange={e => setAddChannel(e.target.value.toUpperCase())}
+                  placeholder="e.g. MAKRO, GAME"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#E31837]/30 focus:border-[#E31837]"
+                />
+              </div>
+            </div>
+
             <div>
               <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
                 Output Types
@@ -334,49 +394,68 @@ export default function AdminReportsPage() {
                 <thead className="bg-gray-50 border-b border-gray-100">
                   <tr>
                     <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Name</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Data Format</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Channel</th>
                     <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Brands</th>
                     <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Output</th>
                     <th className="px-4 py-3" />
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {reports.map(r => (
-                    <tr key={r.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-6 py-3 font-medium text-gray-900">{r.name}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap gap-1">
-                          {r.brands.map(b => (
-                            <span key={b} className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs font-medium">{b}</span>
-                          ))}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap gap-1">
-                          {r.outputTypes.map(t => (
-                            <span key={t} className={`px-2 py-0.5 rounded text-xs font-medium ${
-                              t === 'Excel' ? 'bg-green-50 text-green-700' : 'bg-orange-50 text-orange-700'
-                            }`}>{t}</span>
-                          ))}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex gap-2 justify-end">
-                          <button
-                            onClick={() => openEdit(r)}
-                            className="text-xs text-blue-600 hover:text-blue-800 font-medium"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => handleDelete(r.id, r.name)}
-                            className="text-xs text-red-600 hover:text-red-800 font-medium"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {reports.map(r => {
+                    const fmt = DATA_FORMATS.find(f => f.value === r.dataFormat);
+                    return (
+                      <tr key={r.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-6 py-3 font-medium text-gray-900">{r.name}</td>
+                        <td className="px-4 py-3">
+                          {fmt ? (
+                            <span className="px-2 py-0.5 bg-purple-50 text-purple-700 rounded text-xs font-medium">{fmt.label}</span>
+                          ) : (
+                            <span className="text-gray-400 text-xs">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          {r.channel ? (
+                            <span className="px-2 py-0.5 bg-amber-50 text-amber-700 rounded text-xs font-medium">{r.channel}</span>
+                          ) : (
+                            <span className="text-gray-300 text-xs">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex flex-wrap gap-1">
+                            {r.brands.map(b => (
+                              <span key={b} className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs font-medium">{b}</span>
+                            ))}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex flex-wrap gap-1">
+                            {r.outputTypes.map(t => (
+                              <span key={t} className={`px-2 py-0.5 rounded text-xs font-medium ${
+                                t === 'Excel' ? 'bg-green-50 text-green-700' : 'bg-orange-50 text-orange-700'
+                              }`}>{t}</span>
+                            ))}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex gap-2 justify-end">
+                            <button
+                              onClick={() => openEdit(r)}
+                              className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => handleDelete(r.id, r.name)}
+                              className="text-xs text-red-600 hover:text-red-800 font-medium"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -601,6 +680,35 @@ export default function AdminReportsPage() {
                   onChange={e => setEditName(e.target.value.toUpperCase())}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#E31837]/30 focus:border-[#E31837]"
                 />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">
+                    Data Format <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={editDataFormat}
+                    onChange={e => setEditDataFormat(e.target.value)}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#E31837]/30 focus:border-[#E31837] bg-white"
+                  >
+                    <option value="">Select format…</option>
+                    {DATA_FORMATS.map(f => (
+                      <option key={f.value} value={f.value}>{f.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">
+                    Channel <span className="text-gray-400 font-normal normal-case">(optional)</span>
+                  </label>
+                  <input
+                    value={editChannel}
+                    onChange={e => setEditChannel(e.target.value.toUpperCase())}
+                    placeholder="e.g. MAKRO, GAME"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#E31837]/30 focus:border-[#E31837]"
+                  />
+                </div>
               </div>
 
               <div>

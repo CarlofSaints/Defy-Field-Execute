@@ -8,7 +8,7 @@ import { generateTrainingFeedback } from '@/lib/reports/training-feedback';
 import { generateActivationReport } from '@/lib/reports/activation-report';
 import { generateServiceCallReport } from '@/lib/reports/service-call-report';
 import { loadStoreMap } from '@/lib/storeMapData';
-import { loadReports } from '@/lib/reportData';
+import { loadReports, DATA_FORMAT_LABELS } from '@/lib/reportData';
 import { loadUsers } from '@/lib/userData';
 import { addRunEntry } from '@/lib/runLogData';
 import { sendRunNotification, sendReportEmail } from '@/lib/email';
@@ -25,6 +25,77 @@ interface GenerateResult {
   label:       string;  // 'SALES' | 'MARKETING' | ''
   contentType?: string; // defaults to Excel if omitted
 }
+
+// ── Date helpers ──────────────────────────────────────────────────────────────
+
+function parseDdMmYyyy(raw: string): Date | null {
+  const m = raw.match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})$/);
+  if (!m) return null;
+  const d = new Date(+m[3], +m[2] - 1, +m[1]);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function pad2(n: number) { return String(n).padStart(2, '0'); }
+
+/**
+ * Build a date-range string from raw DD/MM/YYYY date strings.
+ * Single date  → "23-03-2026"
+ * Same year    → "23-03 - 30-03-2026"
+ * Cross year   → "28-12-2025 - 04-01-2026"
+ */
+function buildDateRange(rawDates: string[]): string {
+  const valid = rawDates
+    .map(parseDdMmYyyy)
+    .filter((d): d is Date => d !== null)
+    .sort((a, b) => a.getTime() - b.getTime());
+  if (!valid.length) {
+    const t = new Date();
+    return `${pad2(t.getDate())}-${pad2(t.getMonth() + 1)}-${t.getFullYear()}`;
+  }
+  const first = valid[0];
+  const last  = valid[valid.length - 1];
+  const fStr  = `${pad2(first.getDate())}-${pad2(first.getMonth() + 1)}-${first.getFullYear()}`;
+  const lStr  = `${pad2(last.getDate())}-${pad2(last.getMonth() + 1)}-${last.getFullYear()}`;
+  if (fStr === lStr) return fStr;
+  // Same year → abbreviate start (omit year)
+  if (first.getFullYear() === last.getFullYear()) {
+    return `${pad2(first.getDate())}-${pad2(first.getMonth() + 1)} - ${lStr}`;
+  }
+  return `${fStr} - ${lStr}`;
+}
+
+/**
+ * Central filename builder.
+ * Pattern: BRAND - CHANNEL - REPORT TYPE LABEL - DATE RANGE.ext
+ * e.g.  "DEFY - MAKRO - STOCK COUNT - 23-03 - 30-03-2026.xlsx"
+ *       "DEFY - RED FLAG SALES - 30-03-2026.xlsx"
+ *       "BEKO - STAND REPORT - 23-03 - 30-03-2026.pptx"
+ */
+function buildFilename(
+  brand:      string,
+  dataFormat: string,
+  channel:    string | undefined,
+  rawDates:   string[],
+  label?:     string,  // e.g. 'SALES' | 'MARKETING' for red flag
+): string {
+  const ext = dataFormat === 'stand-report' ? 'pptx' : 'xlsx';
+  const formatLabel = DATA_FORMAT_LABELS[dataFormat] ?? dataFormat.replace(/-/g, ' ');
+  const dateRange   = buildDateRange(rawDates);
+
+  const parts = [brand.toUpperCase()];
+  if (channel) parts.push(channel.toUpperCase());
+  // For red flag, label (SALES/MARKETING) goes after the report type
+  if (label) {
+    parts.push(`${formatLabel.toUpperCase()} ${label}`);
+  } else {
+    parts.push(formatLabel.toUpperCase());
+  }
+  parts.push(dateRange);
+
+  return `${parts.join(' - ')}.${ext}`;
+}
+
+// ── Main route ────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
   let formData: FormData;
@@ -55,11 +126,13 @@ export async function POST(req: NextRequest) {
   const reports    = loadReports();
   const reportDef  = reports.find(r => r.id === reportId);
   const reportName = reportDef?.name ?? reportId.replace(/-/g, ' ').toUpperCase();
+  const dataFormat = reportDef?.dataFormat ?? '';
+  const channel    = reportDef?.channel;
 
   const timestamp = new Date().toISOString();
 
   // ── Pre-generate analysis (skipped if user already confirmed) ───────────────
-  if (!confirmed && reportId.endsWith('-stock-count')) {
+  if (!confirmed && dataFormat === 'stock-count') {
     const { warnings, hardError } = analyzeStockCount(fileBuffer);
     if (hardError) {
       return NextResponse.json({ error: hardError }, { status: 422 });
@@ -73,91 +146,109 @@ export async function POST(req: NextRequest) {
     const results: GenerateResult[] = [];
     void outputType; // reserved for future output-type switching
 
-    if (reportId.endsWith('-stock-count')) {
-      const retailer = reportId
-        .replace(/-stock-count$/, '')
-        .replace(/-/g, ' ')
-        .toUpperCase();
-      const { buffer, filename, rawDates, weekLabel } = await generateMakroStockCount(
-        fileBuffer, brand, storeMap, retailer,
-      );
-      results.push({ excelBuffer: buffer, filename, rawDates, weekLabel, retailer, label: '' });
+    switch (dataFormat) {
 
-    } else if (reportId.endsWith('-red-flag') || reportId === 'red-flag') {
-      // Parse problem selections from the form
-      let salesProblems:     string[] = [];
-      let marketingProblems: string[] = [];
-      try {
-        salesProblems     = JSON.parse((formData.get('salesProblems')     as string | null) || '[]');
-        marketingProblems = JSON.parse((formData.get('marketingProblems') as string | null) || '[]');
-      } catch {
-        return NextResponse.json({ error: 'Invalid problem selection data.' }, { status: 400 });
-      }
-
-      if (!salesProblems.length && !marketingProblems.length) {
-        return NextResponse.json(
-          { error: 'Select at least one problem for the Sales or Marketing report.' },
-          { status: 400 },
+      case 'stock-count': {
+        const retailer = channel || 'UNKNOWN';
+        const { buffer, rawDates, weekLabel } = await generateMakroStockCount(
+          fileBuffer, brand, storeMap, retailer,
         );
+        const filename = buildFilename(brand, dataFormat, channel, rawDates);
+        results.push({ excelBuffer: buffer, filename, rawDates, weekLabel, retailer, label: '' });
+        break;
       }
 
-      // Validate: check selected problems exist in the actual data
-      const dataProblems = extractRedFlagProblems(fileBuffer);
-      const validationErrors: string[] = [];
-      for (const p of salesProblems) {
-        if (!dataProblems.has(p)) {
-          validationErrors.push(`You have selected "${p}" for Sales but no lines exist in your data matching that problem.`);
+      case 'red-flag': {
+        // Parse problem selections from the form
+        let salesProblems:     string[] = [];
+        let marketingProblems: string[] = [];
+        try {
+          salesProblems     = JSON.parse((formData.get('salesProblems')     as string | null) || '[]');
+          marketingProblems = JSON.parse((formData.get('marketingProblems') as string | null) || '[]');
+        } catch {
+          return NextResponse.json({ error: 'Invalid problem selection data.' }, { status: 400 });
         }
-      }
-      for (const p of marketingProblems) {
-        if (!dataProblems.has(p)) {
-          validationErrors.push(`You have selected "${p}" for Marketing but no lines exist in your data matching that problem.`);
+
+        if (!salesProblems.length && !marketingProblems.length) {
+          return NextResponse.json(
+            { error: 'Select at least one problem for the Sales or Marketing report.' },
+            { status: 400 },
+          );
         }
+
+        // Validate: check selected problems exist in the actual data
+        const dataProblems = extractRedFlagProblems(fileBuffer);
+        const validationErrors: string[] = [];
+        for (const p of salesProblems) {
+          if (!dataProblems.has(p)) {
+            validationErrors.push(`You have selected "${p}" for Sales but no lines exist in your data matching that problem.`);
+          }
+        }
+        for (const p of marketingProblems) {
+          if (!dataProblems.has(p)) {
+            validationErrors.push(`You have selected "${p}" for Marketing but no lines exist in your data matching that problem.`);
+          }
+        }
+        if (validationErrors.length) {
+          return NextResponse.json({ error: validationErrors.join('\n') }, { status: 422 });
+        }
+
+        // Generate Sales report
+        if (salesProblems.length) {
+          const { buffer, rawDates } = await generateRedFlag(fileBuffer, brand, 'SALES', salesProblems);
+          const filename = buildFilename(brand, dataFormat, channel, rawDates, 'SALES');
+          results.push({ excelBuffer: buffer, filename, rawDates, weekLabel: '', retailer: '', label: 'SALES' });
+        }
+        // Generate Marketing report
+        if (marketingProblems.length) {
+          const { buffer, rawDates } = await generateRedFlag(fileBuffer, brand, 'MARKETING', marketingProblems);
+          const filename = buildFilename(brand, dataFormat, channel, rawDates, 'MARKETING');
+          results.push({ excelBuffer: buffer, filename, rawDates, weekLabel: '', retailer: '', label: 'MARKETING' });
+        }
+        break;
       }
-      if (validationErrors.length) {
-        return NextResponse.json({ error: validationErrors.join('\n') }, { status: 422 });
+
+      case 'stand-report': {
+        const { buffer, rawDates } = await generateStandReport(fileBuffer, brand);
+        const filename = buildFilename(brand, dataFormat, channel, rawDates);
+        results.push({
+          excelBuffer: buffer,
+          filename,
+          rawDates,
+          weekLabel: '',
+          retailer:  '',
+          label:     '',
+          contentType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        });
+        break;
       }
 
-      // Generate Sales report
-      if (salesProblems.length) {
-        const { buffer, filename, rawDates } = await generateRedFlag(fileBuffer, brand, 'SALES', salesProblems);
-        results.push({ excelBuffer: buffer, filename, rawDates, weekLabel: '', retailer: '', label: 'SALES' });
-      }
-      // Generate Marketing report
-      if (marketingProblems.length) {
-        const { buffer, filename, rawDates } = await generateRedFlag(fileBuffer, brand, 'MARKETING', marketingProblems);
-        results.push({ excelBuffer: buffer, filename, rawDates, weekLabel: '', retailer: '', label: 'MARKETING' });
+      case 'training-feedback': {
+        const { buffer, rawDates } = await generateTrainingFeedback(fileBuffer, brand);
+        const filename = buildFilename(brand, dataFormat, channel, rawDates);
+        results.push({ excelBuffer: buffer, filename, rawDates, weekLabel: '', retailer: '', label: '' });
+        break;
       }
 
-    } else if (reportId === 'stand-report') {
-      const { buffer, filename, rawDates } = await generateStandReport(fileBuffer, brand);
-      results.push({
-        excelBuffer: buffer,
-        filename,
-        rawDates,
-        weekLabel: '',
-        retailer:  '',
-        label:     '',
-        contentType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-      });
+      case 'activation-report': {
+        const { buffer, rawDates } = await generateActivationReport(fileBuffer, brand);
+        const filename = buildFilename(brand, dataFormat, channel, rawDates);
+        results.push({ excelBuffer: buffer, filename, rawDates, weekLabel: '', retailer: '', label: '' });
+        break;
+      }
 
-    } else if (reportId === 'training-feedback-report') {
-      const { buffer, filename, rawDates } = await generateTrainingFeedback(fileBuffer, brand);
-      results.push({ excelBuffer: buffer, filename, rawDates, weekLabel: '', retailer: '', label: '' });
+      case 'service-call': {
+        const { buffer, rawDates } = await generateServiceCallReport(fileBuffer, brand);
+        const filename = buildFilename(brand, dataFormat, channel, rawDates);
+        results.push({ excelBuffer: buffer, filename, rawDates, weekLabel: '', retailer: '', label: '' });
+        break;
+      }
 
-    } else if (reportId === 'activation-report') {
-      const { buffer, filename, rawDates } = await generateActivationReport(fileBuffer, brand);
-      results.push({ excelBuffer: buffer, filename, rawDates, weekLabel: '', retailer: '', label: '' });
-
-    } else if (reportId === 'service-call-report') {
-      const { buffer, filename, rawDates } = await generateServiceCallReport(fileBuffer, brand);
-      results.push({ excelBuffer: buffer, filename, rawDates, weekLabel: '', retailer: '', label: '' });
-
-    } else {
-      return NextResponse.json(
-        { error: `Report "${reportId}" is not yet implemented.` },
-        { status: 422 },
-      );
+      default:
+        return NextResponse.json(
+          { error: `Report "${reportName}" has no data format configured. Please set a data format in the Admin Centre.` },
+          { status: 422 },
+        );
     }
 
     // ── Email size warning ────────────────────────────────────────────────────
@@ -270,9 +361,6 @@ export async function POST(req: NextRequest) {
     console.error('[generate]', message);
 
     after(async () => {
-      const retailer = reportId.endsWith('-stock-count')
-        ? reportId.replace(/-stock-count$/, '').replace(/-/g, ' ').toUpperCase()
-        : '';
       const entry: RunLogEntry = {
         id: randomUUID(),
         timestamp,
@@ -281,7 +369,7 @@ export async function POST(req: NextRequest) {
         reportId,
         reportName,
         brand,
-        retailer,
+        retailer:     channel || '',
         filename:     '',
         status:       'error',
         errorMessage: message,

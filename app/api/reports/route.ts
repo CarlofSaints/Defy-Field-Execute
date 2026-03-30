@@ -7,15 +7,17 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const { name, outputTypes, brands } = await req.json();
-  if (!name || !outputTypes?.length || !brands?.length) {
-    return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+  const { name, dataFormat, channel, outputTypes, brands } = await req.json();
+  if (!name || !dataFormat || !outputTypes?.length || !brands?.length) {
+    return NextResponse.json({ error: 'Missing required fields (name, dataFormat, outputTypes, brands)' }, { status: 400 });
   }
 
   const reports = loadReports();
   const report: ReportDef = {
     id: randomUUID(),
     name: String(name).toUpperCase().trim(),
+    dataFormat: String(dataFormat).trim(),
+    ...(channel ? { channel: String(channel).toUpperCase().trim() } : {}),
     outputTypes,
     brands,
   };

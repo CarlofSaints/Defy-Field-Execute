@@ -10,6 +10,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   reports[idx] = { ...reports[idx], ...updates };
   if (updates.name) reports[idx].name = String(updates.name).toUpperCase().trim();
+  if (updates.dataFormat) reports[idx].dataFormat = String(updates.dataFormat).trim();
+  if (updates.channel !== undefined) {
+    const ch = String(updates.channel ?? '').toUpperCase().trim();
+    if (ch) {
+      reports[idx].channel = ch;
+    } else {
+      delete reports[idx].channel;
+    }
+  }
   await saveReports(reports);
   return NextResponse.json(reports[idx]);
 }
