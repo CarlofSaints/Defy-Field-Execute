@@ -1,7 +1,7 @@
 /**
  * Service Call Report builder
  *
- * Input:  Perigee raw export ("Worksheet" sheet, 21 cols)
+ * Input:  Perigee raw export ("Worksheet" sheet, 22 cols)
  * Output: Excel workbook — MENU + data sheet
  *
  * Column mapping (0-indexed, header at row 0, data from row 1):
@@ -16,16 +16,17 @@
  *   8   Province
  *   9   Date (DD/MM/YYYY)
  *  10   Time
- *  11   Tag
- *  12   Sync Date
- *  13   Sync Time
- *  14   IS THIS A NEW LOG OR RECCURING
- *  15   PLEASE ENTER THE LOG NUMBER
- *  16   WHAT IS THE PRODUCT THAT NEEDS TO BE ATTENDED TO?
- *  17   THE DATE WHEN THE SERVICE CALL WAS LOGGED (DD/MM/YYYY)
- *  18   NAME OF THE CUSTOMER
- *  19   CUSTOMER PHONE NUMBER
- *  20   PLEASE GIVE A FULL DESCRIPTION OF THE MATTER
+ *  11   Visit UUID         ← added by Perigee, shifts everything below by +1
+ *  12   Tag
+ *  13   Sync Date
+ *  14   Sync Time
+ *  15   IS THIS A NEW LOG OR RECURRING?
+ *  16   PLEASE ENTER THE LOG NUMBER
+ *  17   WHAT IS THE PRODUCT THAT NEEDS TO BE ATTENDED TO?
+ *  18   THE DATE WHEN THE SERVICE CALL WAS LOGGED (DD/MM/YYYY)
+ *  19   NAME OF THE CUSTOMER
+ *  20   CUSTOMER PHONE NUMBER
+ *  21   PLEASE GIVE A FULL DESCRIPTION OF THE MATTER
  *
  * No images in this form.
  */
@@ -123,20 +124,20 @@ export async function generateServiceCallReport(
   }
 
   const rows: ServiceCallRow[] = dataRows.map(r => {
-    const loggedDateStr = s(r, 17);
+    const loggedDateStr = s(r, 18);
     const loggedDate    = parseDdMmYyyy(loggedDateStr);
     return {
       repName:     [s(r, 2), s(r, 3)].filter(Boolean).join(' ') || 'UNKNOWN',
       date:        s(r, 9),
       place:       s(r, 6) || 'UNKNOWN',
-      logType:     s(r, 14),
-      logNumber:   s(r, 15),
-      product:     s(r, 16),
+      logType:     s(r, 15),
+      logNumber:   s(r, 16),
+      product:     s(r, 17),
       loggedDate:  loggedDateStr,
       daysSince:   loggedDate ? daysBetween(loggedDate, now) : null,
-      customer:    s(r, 18),
-      phone:       s(r, 19),
-      description: s(r, 20),
+      customer:    s(r, 19),
+      phone:       s(r, 20),
+      description: s(r, 21),
     };
   });
 

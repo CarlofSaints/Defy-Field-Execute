@@ -1,7 +1,7 @@
 /**
  * Defy Red Flag Report builder
  *
- * Input:  Perigee raw export (single "Worksheet" sheet, 19 columns A–S)
+ * Input:  Perigee raw export (single "Worksheet" sheet, 20 columns A–T)
  * Output: Excel workbook — MENU + one sheet per escalation category
  *
  * Column mapping (0-indexed):
@@ -16,14 +16,15 @@
  *   8  I  Province
  *   9  J  Date (DD/MM/YYYY)
  *  10  K  Time
- *  11  L  Tag
- *  12  M  Sync Date
- *  13  N  Sync Time
- *  14  O  DEFY RED FLAG REPORT  ← category (shown as output column)
- *  15  P  WHAT IS THE PROBLEM?  ← used for sheet grouping
- *  16  Q  WHAT IS THE MODEL NUMBER
- *  17  R  TAKE A PICTURE OF THE PROBLEM  ← Perigee image URL
- *  18  S  DO YOU WANT TO ESCALATE TO MANAGEMENT
+ *  11  L  Visit UUID            ← added by Perigee, shifts everything below by +1
+ *  12  M  Tag
+ *  13  N  Sync Date
+ *  14  O  Sync Time
+ *  15  P  DEFY RED FLAG REPORT  ← category (shown as output column)
+ *  16  Q  WHAT IS THE PROBLEM?  ← used for sheet grouping
+ *  17  R  WHAT IS THE MODEL NUMBER
+ *  18  S  TAKE A PICTURE OF THE PROBLEM  ← Perigee image URL
+ *  19  T  DO YOU WANT TO ESCALATE TO MANAGEMENT
  *
  * Image handling:
  *   Images are fetched from SharePoint before building the Excel file.
@@ -102,7 +103,7 @@ export function extractRedFlagProblems(fileBuffer: Buffer): Set<string> {
   const inputWs = inputWb.Sheets[inputWb.SheetNames[0]];
   const rawData = XLSX.utils.sheet_to_json(inputWs, { header: 1, defval: null }) as (string | null)[][];
   return new Set(
-    rawData.slice(1).map(row => String(row[15] ?? '').trim()).filter(Boolean),
+    rawData.slice(1).map(row => String(row[16] ?? '').trim()).filter(Boolean),
   );
 }
 
@@ -125,17 +126,17 @@ export async function generateRedFlag(
 
   // ── 2. Map rows to typed objects ───────────────────────────────────────────
   const rows: RedFlagRow[] = rawRows.map(row => {
-    const imageUrl = String(row[17] ?? '').trim();
+    const imageUrl = String(row[18] ?? '').trim();
     return {
       repName:  [String(row[2] ?? '').trim(), String(row[3] ?? '').trim()].filter(Boolean).join(' ') || 'UNKNOWN',
       store:    String(row[6] ?? '').trim() || String(row[7] ?? '').trim() || 'UNKNOWN',
       date:     String(row[9] ?? '').trim(),
-      category: String(row[14] ?? '').trim(),
-      problem:  String(row[15] ?? '').trim(),
-      model:    String(row[16] ?? '').trim(),
+      category: String(row[15] ?? '').trim(),
+      problem:  String(row[16] ?? '').trim(),
+      model:    String(row[17] ?? '').trim(),
       imageUrl,
       imageId:  urlToImageId(imageUrl),
-      escalate: String(row[18] ?? '').trim(),
+      escalate: String(row[19] ?? '').trim(),
     };
   });
 

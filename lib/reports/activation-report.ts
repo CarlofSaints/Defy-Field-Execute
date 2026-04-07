@@ -1,7 +1,7 @@
 /**
  * Activation Report builder
  *
- * Input:  Perigee raw export ("Worksheet" sheet, 29 cols)
+ * Input:  Perigee raw export ("Worksheet" sheet, 30 cols)
  * Output: Excel workbook — MENU + ACTIVATIONS data sheet
  *
  * Column mapping (0-indexed, data rows start at raw index 2):
@@ -14,14 +14,15 @@
  *   5   Channel
  *   6   Store (Place)
  *   9   Date (DD/MM/YYYY)
- *  14   Activation Start date?
- *  15   Activation End date?
- *  16   Type of Activation?
- *  17   Image URL 1 (Activation Stand 1)
- *  18   Image URL 2 (Activation Stand 2)
- *  19   Image URL 3 (Activation Stand 3)
- *  20   Image URL 4 (Activation Stand 4)  — future Perigee expansion
- *  21   Image URL 5 (Activation Stand 5)  — future Perigee expansion
+ *  11   Visit UUID  ← added by Perigee, shifts everything below by +1
+ *  15   Activation Start date?
+ *  16   Activation End date?
+ *  17   Type of Activation?
+ *  18   Image URL 1 (Activation Stand 1)
+ *  19   Image URL 2 (Activation Stand 2)
+ *  20   Image URL 3 (Activation Stand 3)
+ *  21   Image URL 4 (Activation Stand 4)  — future Perigee expansion
+ *  22   Image URL 5 (Activation Stand 5)  — future Perigee expansion
  *
  * Image handling:
  *   VBA saves each image as "{perigee-id}.jpg" where {perigee-id} is the
@@ -68,7 +69,7 @@ const ROW_H_IMAGE = 72;  // pts (accommodates IMAGE_H with small margin)
 const ROW_H_PLAIN = 20;  // pts
 
 // Raw data column indices for image URLs (0-indexed)
-const RAW_IMAGE_COLS = [17, 18, 19, 20, 21];
+const RAW_IMAGE_COLS = [18, 19, 20, 21, 22];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function s(row: (unknown)[], i: number): string {
@@ -147,9 +148,9 @@ export async function generateActivationReport(
       repName:   [s(r, 2), s(r, 3)].filter(Boolean).join(' ') || 'UNKNOWN',
       date:      s(r, 9),
       place:     s(r, 6) || s(r, 7) || 'UNKNOWN',
-      startDate: s(r, 14),
-      endDate:   s(r, 15),
-      type:      s(r, 16),
+      startDate: s(r, 15),
+      endDate:   s(r, 16),
+      type:      s(r, 17),
       imageUrls,
       imageIds:  imageUrls.map(urlToImageId),
       channel:   s(r, 5),

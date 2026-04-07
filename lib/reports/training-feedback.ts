@@ -1,7 +1,7 @@
 /**
  * Training Feedback Report builder
  *
- * Input:  Perigee raw export ("Worksheet" sheet, 60 cols)
+ * Input:  Perigee raw export ("Worksheet" sheet, 61 cols)
  * Output: Multi-sheet Excel — MENU / OVERALL / CHANNEL VIEW / TRAINER SUMMARY
  *
  * Column mapping (0-indexed):
@@ -11,10 +11,11 @@
  *   6   Store (PLACE)
  *   8   Province (REGION)
  *   9   Date (DD/MM/YYYY)
- *  16   HOW MANY FSPs DID YOU TRAIN?
- *  18-57 Category pairs (see CATEGORIES below)
- *  58   HOW LONG WAS THE TRAINING (IN MINUTES)
- *  59   Image URL (ignored)
+ *  11   Visit UUID  ← added by Perigee, shifts everything below by +1
+ *  17   HOW MANY FSPs DID YOU TRAIN?
+ *  19-58 Category pairs (see CATEGORIES below)
+ *  59   HOW LONG WAS THE TRAINING (IN MINUTES)
+ *  60   Image URL (ignored)
  */
 import ExcelJS from 'exceljs';
 import * as XLSX from 'xlsx';
@@ -26,29 +27,29 @@ import { buildMenuSheet, addNavRow } from './build-menu';
 // yesIdx    = 0-based column index of the YES/NO question
 // detailIdx = 0-based index of the "PLEASE SPECIFY" follow-up (null = not in form)
 const CATEGORIES = [
-  { name: 'AIR CONS',          yesIdx: 18, detailIdx: 19   },
-  { name: 'CHEST FREEZERS',    yesIdx: 20, detailIdx: 21   },
-  { name: 'COFFEE MACHINES',   yesIdx: 22, detailIdx: null },
-  { name: 'COOKER HOODS',      yesIdx: 23, detailIdx: null },
-  { name: 'DISHWASHERS',       yesIdx: 24, detailIdx: 25   },
-  { name: 'DRYERS',            yesIdx: 26, detailIdx: 27   },
-  { name: 'FANS',              yesIdx: 28, detailIdx: 29   },
-  { name: 'FRIDGES',           yesIdx: 30, detailIdx: 31   },
-  { name: 'FRONT LOADERS',     yesIdx: 32, detailIdx: null },
-  { name: 'HAND BLENDERS',     yesIdx: 33, detailIdx: 34   },
-  { name: 'HOBS',              yesIdx: 35, detailIdx: null },
-  { name: 'IRONS',             yesIdx: 36, detailIdx: 37   },
-  { name: 'JUICERS',           yesIdx: 38, detailIdx: 39   },
-  { name: 'KETTLES',           yesIdx: 40, detailIdx: 41   },
-  { name: 'MICROWAVES',        yesIdx: 42, detailIdx: 43   },
-  { name: 'OVENS',             yesIdx: 44, detailIdx: 45   },
-  { name: 'PRESSURE COOKERS',  yesIdx: 46, detailIdx: null },
-  { name: 'SLOW COOKERS',      yesIdx: 47, detailIdx: 48   },
-  { name: 'STOVES',            yesIdx: 49, detailIdx: 50   },
-  { name: 'TABLE BLENDERS',    yesIdx: 51, detailIdx: 52   },
-  { name: 'TOASTERS',          yesIdx: 53, detailIdx: null },
-  { name: 'TOP LOADERS',       yesIdx: 54, detailIdx: 55   },
-  { name: 'TWIN TUBS',         yesIdx: 56, detailIdx: 57   },
+  { name: 'AIR CONS',          yesIdx: 19, detailIdx: 20   },
+  { name: 'CHEST FREEZERS',    yesIdx: 21, detailIdx: 22   },
+  { name: 'COFFEE MACHINES',   yesIdx: 23, detailIdx: null },
+  { name: 'COOKER HOODS',      yesIdx: 24, detailIdx: null },
+  { name: 'DISHWASHERS',       yesIdx: 25, detailIdx: 26   },
+  { name: 'DRYERS',            yesIdx: 27, detailIdx: 28   },
+  { name: 'FANS',              yesIdx: 29, detailIdx: 30   },
+  { name: 'FRIDGES',           yesIdx: 31, detailIdx: 32   },
+  { name: 'FRONT LOADERS',     yesIdx: 33, detailIdx: null },
+  { name: 'HAND BLENDERS',     yesIdx: 34, detailIdx: 35   },
+  { name: 'HOBS',              yesIdx: 36, detailIdx: null },
+  { name: 'IRONS',             yesIdx: 37, detailIdx: 38   },
+  { name: 'JUICERS',           yesIdx: 39, detailIdx: 40   },
+  { name: 'KETTLES',           yesIdx: 41, detailIdx: 42   },
+  { name: 'MICROWAVES',        yesIdx: 43, detailIdx: 44   },
+  { name: 'OVENS',             yesIdx: 45, detailIdx: 46   },
+  { name: 'PRESSURE COOKERS',  yesIdx: 47, detailIdx: null },
+  { name: 'SLOW COOKERS',      yesIdx: 48, detailIdx: 49   },
+  { name: 'STOVES',            yesIdx: 50, detailIdx: 51   },
+  { name: 'TABLE BLENDERS',    yesIdx: 52, detailIdx: 53   },
+  { name: 'TOASTERS',          yesIdx: 54, detailIdx: null },
+  { name: 'TOP LOADERS',       yesIdx: 55, detailIdx: 56   },
+  { name: 'TWIN TUBS',         yesIdx: 57, detailIdx: 58   },
 ] as const;
 
 // ─── Styling ──────────────────────────────────────────────────────────────────
@@ -122,11 +123,11 @@ export async function generateTrainingFeedback(
       store:        s(a, 6),
       channel:      s(a, 5),
       province:     s(a, 8),
-      fsps:         a[16] != null ? Number(a[16]) : null as number | null,
+      fsps:         a[17] != null ? Number(a[17]) : null as number | null,
       trainedOn,
       details,
       noOfTrainings,
-      durationMins: a[58] != null ? Number(a[58]) : null as number | null,
+      durationMins: a[59] != null ? Number(a[59]) : null as number | null,
     };
   }).filter(r => r.trainerName);
 
