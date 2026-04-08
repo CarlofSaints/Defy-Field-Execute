@@ -1,30 +1,27 @@
 /**
  * Defy Red Flag Report builder
  *
- * Input:  Perigee raw export (single "Worksheet" sheet, 20 columns A–T)
- * Output: Excel workbook — MENU + one sheet per escalation category
+ * Input:  Perigee raw export (single "Worksheet" sheet)
+ * Output: Excel workbook — MENU + one sheet per problem
  *
- * Column mapping (0-indexed):
+ * Column lookup is HEADER-BASED (by question name), so the generator survives
+ * column additions/reordering on the Perigee side. See findHeaderCols() below.
+ *
+ * Fixed columns (by position — these never move on the Perigee export):
  *   0  A  ID
  *   1  B  Email
  *   2  C  First Name
  *   3  D  Last Name
- *   4  E  Customer
- *   5  F  Channel
  *   6  G  Store
  *   7  H  Store Code
- *   8  I  Province
  *   9  J  Date (DD/MM/YYYY)
- *  10  K  Time
- *  11  L  Visit UUID            ← added by Perigee, shifts everything below by +1
- *  12  M  Tag
- *  13  N  Sync Date
- *  14  O  Sync Time
- *  15  P  DEFY RED FLAG REPORT  ← category (shown as output column)
- *  16  Q  WHAT IS THE PROBLEM?  ← used for sheet grouping
- *  17  R  WHAT IS THE MODEL NUMBER
- *  18  S  TAKE A PICTURE OF THE PROBLEM  ← Perigee image URL
- *  19  T  DO YOU WANT TO ESCALATE TO MANAGEMENT
+ *
+ * Dynamic columns (located by header name):
+ *   "WHAT IS THE PROBLEM?"                 → problem (sheet grouping)
+ *   "WHAT IS THE MODEL NUMBER" (×N)        → model (first non-empty)
+ *   "Explain shopfitting issue"            → shopfitting detail (fallback)
+ *   "TAKE A PICTURE OF THE PROBLEM..." (×N) → image URL (first non-empty)
+ *   "DO YOU WANT TO ESCALATE TO MANAGEMENT" → escalate
  *
  * Image handling:
  *   Images are fetched from SharePoint before building the Excel file.
@@ -53,14 +50,14 @@ const OUT_COLS = [
   'REPRESENTATIVE NAME',   // 1
   'DATE',                  // 2
   'STORE',                 // 3
-  'CATEGORY',              // 4
-  'WHAT IS THE PROBLEM?',  // 5
-  'MODEL NUMBER',          // 6
-  'PICTURE',               // 7 ← image embedded here
-  'ESCALATE?',             // 8
+  'WHAT IS THE PROBLEM?',  // 4
+  'MODEL NUMBER',          // 5
+  'PICTURE',               // 6 ← image embedded here
+  'ESCALATE?',             // 7
 ];
-const PIC_COL     = 7;   // 1-indexed column for the picture
-const PIC_COL_0   = 6;   // 0-indexed (for addImage)
+const PIC_COL     = 6;   // 1-indexed column for the picture
+const PIC_COL_0   = 5;   // 0-indexed (for addImage)
+const ESCAL_COL   = 7;   // 1-indexed column for the escalate flag
 const IMAGE_W     = 110; // px
 const IMAGE_H     = 85;  // px
 const ROW_H_IMAGE = 68;  // pts (accommodates IMAGE_H with small margin)
@@ -71,7 +68,6 @@ interface RedFlagRow {
   repName:  string;
   store:    string;
   date:     string;
-  category: string;
   problem:  string;
   model:    string;
   imageUrl: string;
@@ -82,6 +78,38 @@ interface RedFlagRow {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function safeSheet(name: string): string {
   return name.replace(/[/\\*?:[\]]/g, '').trim().slice(0, 31) || 'OTHER';
+}
+
+/** Normalise a header cell for comparison (case/whitespace/punctuation insensitive). */
+function normHeader(v: unknown): string {
+  return String(v ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/**
+ * Find all column indices whose header (row 0) matches the given predicate.
+ * Predicate receives the normalised header string.
+ */
+function findHeaderCols(
+  headerRow: (string | number | null)[],
+  predicate: (normalised: string) => boolean,
+): number[] {
+  const hits: number[] = [];
+  headerRow.forEach((v, i) => {
+    if (predicate(normHeader(v))) hits.push(i);
+  });
+  return hits;
+}
+
+/** First non-empty string value across a list of column indices. */
+function firstNonEmpty(row: (string | number | null)[], cols: number[]): string {
+  for (const c of cols) {
+    const v = row[c];
+    if (v != null) {
+      const s = String(v).trim();
+      if (s !== '') return s;
+    }
+  }
+  return '';
 }
 
 /**
@@ -101,9 +129,17 @@ function urlToImageId(url: string): string {
 export function extractRedFlagProblems(fileBuffer: Buffer): Set<string> {
   const inputWb = XLSX.read(fileBuffer, { type: 'buffer' });
   const inputWs = inputWb.Sheets[inputWb.SheetNames[0]];
-  const rawData = XLSX.utils.sheet_to_json(inputWs, { header: 1, defval: null }) as (string | null)[][];
+  const rawData = XLSX.utils.sheet_to_json(inputWs, { header: 1, defval: null }) as (string | number | null)[][];
+  if (rawData.length < 2) return new Set();
+
+  const headerRow  = rawData[0] || [];
+  const problemCols = findHeaderCols(headerRow, h => h === 'what is the problem?');
+  if (problemCols.length === 0) return new Set();
+
   return new Set(
-    rawData.slice(1).map(row => String(row[16] ?? '').trim()).filter(Boolean),
+    rawData.slice(1)
+      .map(row => firstNonEmpty(row, problemCols))
+      .filter(Boolean),
   );
 }
 
@@ -122,21 +158,36 @@ export async function generateRedFlag(
 
   if (rawData.length < 2) throw new Error('No data rows found in uploaded file.');
 
-  const rawRows = rawData.slice(1);
+  const headerRow = rawData[0] || [];
+  const rawRows   = rawData.slice(1);
+
+  // Header-based column resolution (survives Perigee column reordering/additions)
+  const problemCols    = findHeaderCols(headerRow, h => h === 'what is the problem?');
+  const modelCols      = findHeaderCols(headerRow, h => h === 'what is the model number');
+  const shopfittingCols = findHeaderCols(headerRow, h => h.startsWith('explain shopfitting'));
+  const pictureCols    = findHeaderCols(headerRow, h => h.startsWith('take a picture of the problem'));
+  const escalateCols   = findHeaderCols(headerRow, h => h.startsWith('do you want to escalate'));
+
+  if (problemCols.length === 0) {
+    throw new Error('Could not find "WHAT IS THE PROBLEM?" column in uploaded file. Is this a Red Flag export?');
+  }
+
+  console.log(`[red-flag/${label}] Header map: problem=[${problemCols}] model=[${modelCols}] shopfitting=[${shopfittingCols}] picture=[${pictureCols}] escalate=[${escalateCols}]`);
 
   // ── 2. Map rows to typed objects ───────────────────────────────────────────
   const rows: RedFlagRow[] = rawRows.map(row => {
-    const imageUrl = String(row[18] ?? '').trim();
+    const imageUrl = firstNonEmpty(row, pictureCols);
+    // Prefer model number; fall back to shopfitting explanation for shopfitting rows
+    const model = firstNonEmpty(row, modelCols) || firstNonEmpty(row, shopfittingCols);
     return {
       repName:  [String(row[2] ?? '').trim(), String(row[3] ?? '').trim()].filter(Boolean).join(' ') || 'UNKNOWN',
       store:    String(row[6] ?? '').trim() || String(row[7] ?? '').trim() || 'UNKNOWN',
       date:     String(row[9] ?? '').trim(),
-      category: String(row[15] ?? '').trim(),
-      problem:  String(row[16] ?? '').trim(),
-      model:    String(row[17] ?? '').trim(),
+      problem:  firstNonEmpty(row, problemCols),
+      model,
       imageUrl,
       imageId:  urlToImageId(imageUrl),
-      escalate: String(row[19] ?? '').trim(),
+      escalate: firstNonEmpty(row, escalateCols),
     };
   });
 
@@ -266,7 +317,6 @@ export async function generateRedFlag(
         row.repName,
         row.date,
         row.store,
-        row.category,
         row.problem,
         row.model,
         '',           // PICTURE — set below
@@ -302,14 +352,14 @@ export async function generateRedFlag(
 
       // Highlight escalated rows
       if (/^yes$/i.test(row.escalate)) {
-        const escalCell = r.getCell(8);
+        const escalCell = r.getCell(ESCAL_COL);
         escalCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE5E5' } };
         escalCell.font = { bold: true, color: { argb: DEFY_RED }, size: 10, name: 'Arial' };
       }
     });
 
-    // Column widths
-    [22, 12, 28, 20, 35, 16, 18, 14]
+    // Column widths (one per OUT_COLS entry)
+    [22, 12, 28, 35, 16, 18, 14]
       .forEach((w, idx) => { ws.getColumn(idx + 1).width = w; });
   }
 
