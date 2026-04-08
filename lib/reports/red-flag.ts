@@ -41,6 +41,7 @@ import path from 'path';
 import { buildMenuSheet, applyHeaderStyle, applyDataStyle, addNavRow } from './build-menu';
 import { listFilesInSPFolder, downloadSPFileById } from '@/lib/graph-oj';
 import { loadAppSettings } from '@/lib/appSettings';
+import { parseSpPath } from '@/lib/spUrlParser';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const DEFY_RED = 'E31837';
@@ -208,11 +209,13 @@ export async function generateRedFlag(
   // Images saved by VBA as "{imageId}.jpg" in the PERIGEE IMAGE DOWNLOADS folder.
   const BASE_PATH      = (process.env.DFE_SP_BASE_PATH   || 'DEFY/PERIGEE - FG/2. EXTERNAL SYNC/REPORTS').trim();
   const appSettings    = loadAppSettings();
-  const PICTURES_FOLDER = (
+  const rawPicturesPath = (
     appSettings.picturesFolderPath ||
     process.env.DFE_PICTURES_SP_PATH ||
     `${BASE_PATH}/PERIGEE IMAGE DOWNLOADS`
   ).trim();
+  // Normalise — the setting may be a SharePoint URL pasted from the browser.
+  const PICTURES_FOLDER = parseSpPath(rawPicturesPath);
 
   // Collect unique image IDs across filtered rows
   const uniqueIds = [...new Set(filteredRows.map(r => r.imageId).filter(Boolean))];

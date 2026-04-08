@@ -2,7 +2,8 @@
 
 import { useAuth } from '@/lib/useAuth';
 import Header from '@/components/Header';
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { parseSpPath } from '@/lib/spUrlParser';
 
 interface ReportDef {
   id: string;
@@ -97,6 +98,9 @@ export default function AdminReportsPage() {
   const [picturesPathSaving,  setPicturesPathSaving]  = useState(false);
   const [picturesPathLoaded,  setPicturesPathLoaded]  = useState(false);
 
+  const [activationPath,       setActivationPath]       = useState('');
+  const [activationPathSaving, setActivationPathSaving] = useState(false);
+
   // Run Log
   const [runLog,        setRunLog]        = useState<RunLogEntry[]>([]);
   const [runLogLoading, setRunLogLoading] = useState(false);
@@ -140,6 +144,7 @@ export default function AdminReportsPage() {
     if (res.ok) {
       const data = await res.json();
       setPicturesPath(data.picturesFolderPath ?? '');
+      setActivationPath(data.activationPicturesFolderPath ?? '');
       setPicturesPathLoaded(true);
     }
   }, []);
@@ -167,12 +172,32 @@ export default function AdminReportsPage() {
     });
     setPicturesPathSaving(false);
     if (res.ok) {
-      notify('Image folder path saved');
+      notify('Perigee image folder path saved');
     } else {
       const { error } = await res.json().catch(() => ({ error: 'Save failed' }));
       notify(error || 'Save failed', 'error');
     }
   }
+
+  async function handleSaveActivationPath() {
+    setActivationPathSaving(true);
+    const res = await fetch('/api/app-settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activationPicturesFolderPath: activationPath }),
+    });
+    setActivationPathSaving(false);
+    if (res.ok) {
+      notify('Activation image folder path saved');
+    } else {
+      const { error } = await res.json().catch(() => ({ error: 'Save failed' }));
+      notify(error || 'Save failed', 'error');
+    }
+  }
+
+  // Live-preview of the normalised library-relative path
+  const picturesPathPreview   = useMemo(() => parseSpPath(picturesPath), [picturesPath]);
+  const activationPathPreview = useMemo(() => parseSpPath(activationPath), [activationPath]);
 
   async function handleStoreMapUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -624,20 +649,18 @@ export default function AdminReportsPage() {
           </div>
         </div>
 
-        {/* Red Flag Image Folder */}
+        {/* Perigee Image Folder (Red Flag + Stand Report) */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
           <div className="border-l-4 border-[#E31837] px-6 py-4">
-            <h2 className="font-semibold text-gray-800">Red Flag Image Folder</h2>
+            <h2 className="font-semibold text-gray-800">Perigee Image Folder</h2>
             <p className="text-sm text-gray-500 mt-0.5">
-              SharePoint path to the folder where red-flag images are stored. Leave blank to use the default.
+              Used by the <strong>Red Flag</strong> and <strong>Stand Report</strong> builders. Paste the folder URL from your SharePoint browser address bar or type a library-relative path. Leave blank to use the default.
             </p>
           </div>
           <div className="px-6 pb-6 space-y-3">
             <p className="text-xs text-gray-500">
               Default: <span className="font-mono bg-gray-100 px-1 rounded">
-                {process.env.NEXT_PUBLIC_DFE_SP_BASE_PATH
-                  ? `${process.env.NEXT_PUBLIC_DFE_SP_BASE_PATH}/PERIGEE IMAGE DOWNLOADS`
-                  : 'DEFY/PERIGEE - FG/2. EXTERNAL SYNC/REPORTS/PERIGEE IMAGE DOWNLOADS'}
+                DEFY/PERIGEE - FG/2. EXTERNAL SYNC/REPORTS/PERIGEE IMAGE DOWNLOADS
               </span>
             </p>
 
@@ -645,10 +668,19 @@ export default function AdminReportsPage() {
               type="text"
               value={picturesPathLoaded ? picturesPath : ''}
               onChange={e => setPicturesPath(e.target.value)}
-              placeholder="e.g. DEFY/PERIGEE - FG/2. EXTERNAL SYNC/REPORTS/PERIGEE IMAGE DOWNLOADS"
+              placeholder="Paste SharePoint URL or type path…"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#E31837]/30 focus:border-[#E31837]"
               disabled={!picturesPathLoaded}
             />
+
+            {picturesPath.trim() && (
+              <p className="text-xs text-gray-600">
+                Resolves to:{' '}
+                <span className="font-mono bg-green-50 text-green-800 px-1.5 py-0.5 rounded border border-green-200">
+                  {picturesPathPreview || '(empty)'}
+                </span>
+              </p>
+            )}
 
             <button
               type="button"
@@ -657,6 +689,50 @@ export default function AdminReportsPage() {
               className="bg-[#E31837] hover:bg-[#c01430] text-white px-5 py-2 rounded-lg text-sm font-semibold disabled:opacity-50"
             >
               {picturesPathSaving ? 'Saving…' : 'Save Path'}
+            </button>
+          </div>
+        </div>
+
+        {/* Activation Image Folder */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="border-l-4 border-[#E31837] px-6 py-4">
+            <h2 className="font-semibold text-gray-800">Activation Image Folder</h2>
+            <p className="text-sm text-gray-500 mt-0.5">
+              Used by the <strong>Activation Report</strong> builder. Paste the folder URL from your SharePoint browser address bar or type a library-relative path. Leave blank to use the default.
+            </p>
+          </div>
+          <div className="px-6 pb-6 space-y-3">
+            <p className="text-xs text-gray-500">
+              Default: <span className="font-mono bg-gray-100 px-1 rounded">
+                DEFY/PERIGEE - FG/2. EXTERNAL SYNC/REPORTS/ACTIVATION IMAGE DOWNLOADS
+              </span>
+            </p>
+
+            <input
+              type="text"
+              value={picturesPathLoaded ? activationPath : ''}
+              onChange={e => setActivationPath(e.target.value)}
+              placeholder="Paste SharePoint URL or type path…"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#E31837]/30 focus:border-[#E31837]"
+              disabled={!picturesPathLoaded}
+            />
+
+            {activationPath.trim() && (
+              <p className="text-xs text-gray-600">
+                Resolves to:{' '}
+                <span className="font-mono bg-green-50 text-green-800 px-1.5 py-0.5 rounded border border-green-200">
+                  {activationPathPreview || '(empty)'}
+                </span>
+              </p>
+            )}
+
+            <button
+              type="button"
+              onClick={handleSaveActivationPath}
+              disabled={activationPathSaving || !picturesPathLoaded}
+              className="bg-[#E31837] hover:bg-[#c01430] text-white px-5 py-2 rounded-lg text-sm font-semibold disabled:opacity-50"
+            >
+              {activationPathSaving ? 'Saving…' : 'Save Path'}
             </button>
           </div>
         </div>

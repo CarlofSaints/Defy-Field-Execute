@@ -29,8 +29,9 @@
  *   last meaningful path segment of the Perigee image URL
  *   (e.g. "perigee-1307447LTnKUCFZBrdtVk").
  *
- *   SP folder path: DFE_ACTIVATION_PICTURES_SP_PATH env var
- *   Default:        {DFE_SP_BASE_PATH}/ACTIVATION IMAGE DOWNLOADS
+ *   SP folder path: appSettings.activationPicturesFolderPath (admin centre)
+ *                   → falls back to DFE_ACTIVATION_PICTURES_SP_PATH env var
+ *                   → default: {DFE_SP_BASE_PATH}/ACTIVATION IMAGE DOWNLOADS
  *
  *   If the file is not found on SP the cell keeps its clickable URL hyperlink.
  */
@@ -40,6 +41,8 @@ import fs   from 'fs';
 import path from 'path';
 import { buildMenuSheet, applyHeaderStyle, applyDataStyle, addNavRow } from './build-menu';
 import { listFilesInSPFolder, downloadSPFileById } from '@/lib/graph-oj';
+import { loadAppSettings } from '@/lib/appSettings';
+import { parseSpPath }     from '@/lib/spUrlParser';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const SHEET_NAME = 'ACTIVATIONS';
@@ -162,10 +165,14 @@ export async function generateActivationReport(
 
   // ── 3. Pre-fetch images from SharePoint ────────────────────────────────────
   const BASE_PATH       = (process.env.DFE_SP_BASE_PATH || 'DEFY/PERIGEE - FG/2. EXTERNAL SYNC/REPORTS').trim();
-  const PICTURES_FOLDER = (
+  const appSettings     = loadAppSettings();
+  const rawPicturesPath = (
+    appSettings.activationPicturesFolderPath ||
     process.env.DFE_ACTIVATION_PICTURES_SP_PATH ||
     `${BASE_PATH}/ACTIVATION IMAGE DOWNLOADS`
   ).trim();
+  // Normalise — the setting may be a SharePoint URL pasted from the browser.
+  const PICTURES_FOLDER = parseSpPath(rawPicturesPath);
 
   // Collect unique non-empty image IDs
   const uniqueIds = [...new Set(rows.flatMap(r => r.imageIds).filter(Boolean))];

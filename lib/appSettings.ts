@@ -2,12 +2,21 @@ import fs from 'fs';
 import path from 'path';
 
 export interface AppSettings {
-  /** SP path to the folder containing red-flag images. Empty = use default. */
+  /**
+   * SP path (or full URL) to the folder containing Perigee visit images
+   * shared by the Red Flag and Stand Report builders. Empty = use default.
+   */
   picturesFolderPath: string;
+  /**
+   * SP path (or full URL) to the folder containing Activation campaign
+   * images used by the Activation Report builder. Empty = use default.
+   */
+  activationPicturesFolderPath: string;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
   picturesFolderPath: '',
+  activationPicturesFolderPath: '',
 };
 
 const FILE      = path.join(process.cwd(), 'data', 'appSettings.json');

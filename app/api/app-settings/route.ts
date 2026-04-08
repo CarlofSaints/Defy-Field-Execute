@@ -40,6 +40,9 @@ export async function PATCH(req: NextRequest) {
     ...(typeof body.picturesFolderPath === 'string'
       ? { picturesFolderPath: body.picturesFolderPath.trim() }
       : {}),
+    ...(typeof body.activationPicturesFolderPath === 'string'
+      ? { activationPicturesFolderPath: body.activationPicturesFolderPath.trim() }
+      : {}),
   };
 
   await saveAppSettings(updated);

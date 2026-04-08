@@ -22,6 +22,7 @@ import fs   from 'fs';
 import path from 'path';
 import { listFilesInSPFolder, downloadSPFileById } from '@/lib/graph-oj';
 import { loadAppSettings }    from '@/lib/appSettings';
+import { parseSpPath }        from '@/lib/spUrlParser';
 
 // ─── Slide dimensions (A4 landscape, EMU) ────────────────────────────────────
 const SLIDE_W = 10693400;
@@ -431,11 +432,13 @@ export async function generateStandReport(
   // ── 4. Fetch images from SharePoint ────────────────────────────────────────
   const BASE_PATH = (process.env.DFE_SP_BASE_PATH || 'DEFY/PERIGEE - FG/2. EXTERNAL SYNC/REPORTS').trim();
   const appSettings = loadAppSettings();
-  const PICTURES_FOLDER = (
+  const rawPicturesPath = (
     appSettings.picturesFolderPath ||
     process.env.DFE_PICTURES_SP_PATH ||
     `${BASE_PATH}/PERIGEE IMAGE DOWNLOADS`
   ).trim();
+  // Normalise — the setting may be a SharePoint URL pasted from the browser.
+  const PICTURES_FOLDER = parseSpPath(rawPicturesPath);
 
   const allIds = [...new Set(slideGroups.flatMap(g => g.imageIds).filter(Boolean))];
 
