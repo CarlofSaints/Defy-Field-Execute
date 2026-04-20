@@ -7,6 +7,7 @@ import { generateStandReport } from '@/lib/reports/stand-report';
 import { generateTrainingFeedback } from '@/lib/reports/training-feedback';
 import { generateActivationReport } from '@/lib/reports/activation-report';
 import { generateServiceCallReport } from '@/lib/reports/service-call-report';
+import { analyzeChannelMismatch, filterByChannel } from '@/lib/reports/channel-check';
 import { loadStoreMap } from '@/lib/storeMapData';
 import { loadReports, DATA_FORMAT_LABELS } from '@/lib/reportData';
 import { loadUsers } from '@/lib/userData';
@@ -114,12 +115,13 @@ export async function POST(req: NextRequest) {
   const sendEmail       = formData.get('sendEmail') === 'true';
   const additionalEmail = (formData.get('additionalEmail') as string | null)?.trim() || '';
   const confirmed       = formData.get('confirmed') === 'true';
+  const channelAction   = (formData.get('channelAction') as string | null)?.trim() || '';
 
   if (!file || !brand || !reportId) {
     return NextResponse.json({ error: 'file, brand and reportId are required' }, { status: 400 });
   }
 
-  const fileBuffer  = Buffer.from(await file.arrayBuffer());
+  let fileBuffer  = Buffer.from(await file.arrayBuffer());
   const rawFilename = file.name;
   const storeMap    = loadStoreMap();
 
@@ -130,6 +132,19 @@ export async function POST(req: NextRequest) {
   const channel    = reportDef?.channel;
 
   const timestamp = new Date().toISOString();
+
+  // ── Channel mismatch check (before stock-count analysis) ────────────────────
+  if (channel && !channelAction) {
+    const mismatch = analyzeChannelMismatch(fileBuffer, channel);
+    if (mismatch) {
+      return NextResponse.json({ channelMismatch: mismatch }, { status: 200 });
+    }
+  }
+
+  // If user chose to exclude mismatched rows, filter before any further processing
+  if (channel && channelAction === 'exclude') {
+    fileBuffer = filterByChannel(fileBuffer, channel) as Buffer<ArrayBuffer>;
+  }
 
   // ── Pre-generate analysis (skipped if user already confirmed) ───────────────
   if (!confirmed && dataFormat === 'stock-count') {

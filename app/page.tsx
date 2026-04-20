@@ -314,6 +314,10 @@ export default function DashboardPage() {
   const [warnings,          setWarnings]          = useState<string[] | null>(null);
   const [largeFileWarning,  setLargeFileWarning]  = useState(false);
 
+  // Channel mismatch
+  const [channelMismatch,   setChannelMismatch]   = useState<{ expected: string; mismatches: Record<string, number>; totalMismatch: number } | null>(null);
+  const [channelAction,     setChannelAction]     = useState<'exclude' | 'include' | null>(null);
+
   // Red flag problem distribution
   const [problems,          setProblems]          = useState<string[]>([]);
   const [salesProblems,     setSalesProblems]     = useState<string[]>([]);
@@ -329,6 +333,12 @@ export default function DashboardPage() {
 
   // Derived: is the selected report a red flag report?
   const isRedFlag = !!report && report.dataFormat === 'red-flag';
+
+  // Clear channel mismatch when file or report changes
+  useEffect(() => {
+    setChannelMismatch(null);
+    setChannelAction(null);
+  }, [file, report]);
 
   // When red flag + file changes, parse problem list from the file
   useEffect(() => {
@@ -375,7 +385,7 @@ export default function DashboardPage() {
     r.brands.some(b => brands.includes(b))
   );
 
-  async function handleGenerate(confirmed = false, ignoreLargeFile = false) {
+  async function handleGenerate(confirmed = false, ignoreLargeFile = false, channelActionOverride?: 'exclude' | 'include') {
     setError(null);
     setSuccess(null);
     if (!confirmed) setWarnings(null);
@@ -410,6 +420,8 @@ export default function DashboardPage() {
     fd.append('sendEmail', sendEmail ? 'true' : 'false');
     if (sendEmail && additionalEmail) fd.append('additionalEmail', additionalEmail);
     if (confirmed) fd.append('confirmed', 'true');
+    const effectiveChannelAction = channelActionOverride ?? channelAction;
+    if (effectiveChannelAction) fd.append('channelAction', effectiveChannelAction);
     if (isRedFlag) {
       fd.append('salesProblems',     JSON.stringify(salesProblems));
       fd.append('marketingProblems', JSON.stringify(marketingProblems));
@@ -421,6 +433,13 @@ export default function DashboardPage() {
 
       if (!res.ok) throw new Error(body.error || `Server error ${res.status}`);
 
+      // 200 with channel mismatch — show choice card
+      if (body.channelMismatch) {
+        setChannelMismatch(body.channelMismatch);
+        setGenerating(false);
+        return;
+      }
+
       // 200 with warnings — show confirmation card
       if (body.warnings?.length) {
         setWarnings(body.warnings as string[]);
@@ -430,6 +449,8 @@ export default function DashboardPage() {
       const names: string[] = body.filenames ?? (body.filename ? [body.filename as string] : []);
       setSuccess(`${names.join(' + ')} saved to SharePoint${sendEmail ? ' and sent by email' : ''}.`);
       setWarnings(null);
+      setChannelMismatch(null);
+      setChannelAction(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to generate report.');
     } finally {
@@ -707,6 +728,52 @@ export default function DashboardPage() {
                 className="px-5 py-2 rounded-xl border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 text-sm font-semibold transition-all"
               >
                 Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── Channel mismatch card ──────────────────────────────────────── */}
+        {channelMismatch && (
+          <div className="bg-amber-50 border border-amber-300 rounded-xl px-4 py-4 space-y-3">
+            <div className="flex items-start gap-2">
+              <svg className="w-5 h-5 mt-0.5 shrink-0 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+              </svg>
+              <div>
+                <p className="font-semibold text-amber-800 text-sm">Channel mismatch detected</p>
+                <p className="text-sm text-amber-700 mt-1">
+                  You are running a <span className="font-bold">{channelMismatch.expected.toUpperCase()}</span> report but your data contains:
+                </p>
+              </div>
+            </div>
+            <ul className="space-y-1 pl-7">
+              {Object.entries(channelMismatch.mismatches).map(([ch, count]) => (
+                <li key={ch} className="flex items-center gap-2 text-sm text-amber-900">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
+                  <span className="font-semibold">{ch}</span> — {count} row{count === 1 ? '' : 's'}
+                </li>
+              ))}
+            </ul>
+            <p className="text-xs text-amber-700 pl-7">
+              {channelMismatch.totalMismatch} mismatched row{channelMismatch.totalMismatch === 1 ? '' : 's'} in total.
+            </p>
+            <div className="flex gap-3 pt-1">
+              <button
+                type="button"
+                onClick={() => { setChannelAction('exclude'); setChannelMismatch(null); handleGenerate(false, false, 'exclude'); }}
+                disabled={generating}
+                className="px-5 py-2 rounded-xl bg-[#E31837] hover:bg-[#c01430] disabled:bg-gray-200 disabled:text-gray-400 text-white text-sm font-semibold transition-all"
+              >
+                {generating ? 'Generating…' : 'Exclude mismatched data'}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setChannelAction('include'); setChannelMismatch(null); handleGenerate(false, false, 'include'); }}
+                disabled={generating}
+                className="px-5 py-2 rounded-xl border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 text-sm font-semibold transition-all"
+              >
+                {generating ? 'Generating…' : 'Include all data'}
               </button>
             </div>
           </div>

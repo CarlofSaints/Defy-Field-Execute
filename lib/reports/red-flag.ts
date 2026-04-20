@@ -81,9 +81,9 @@ function safeSheet(name: string): string {
   return name.replace(/[/\\*?:[\]]/g, '').trim().slice(0, 31) || 'OTHER';
 }
 
-/** Normalise a header cell for comparison (case/whitespace/punctuation insensitive). */
+/** Normalise a header cell for comparison (case/whitespace/trailing-punctuation insensitive). */
 function normHeader(v: unknown): string {
-  return String(v ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  return String(v ?? '').trim().toLowerCase().replace(/\s+/g, ' ').replace(/[?]$/, '');
 }
 
 /**
@@ -134,7 +134,7 @@ export function extractRedFlagProblems(fileBuffer: Buffer): Set<string> {
   if (rawData.length < 2) return new Set();
 
   const headerRow  = rawData[0] || [];
-  const problemCols = findHeaderCols(headerRow, h => h === 'what is the problem?');
+  const problemCols = findHeaderCols(headerRow, h => h === 'what is the problem');
   if (problemCols.length === 0) return new Set();
 
   return new Set(
@@ -163,7 +163,7 @@ export async function generateRedFlag(
   const rawRows   = rawData.slice(1);
 
   // Header-based column resolution (survives Perigee column reordering/additions)
-  const problemCols    = findHeaderCols(headerRow, h => h === 'what is the problem?');
+  const problemCols    = findHeaderCols(headerRow, h => h === 'what is the problem');
   const modelCols      = findHeaderCols(headerRow, h => h === 'what is the model number');
   const shopfittingCols = findHeaderCols(headerRow, h => h.startsWith('explain shopfitting'));
   const pictureCols    = findHeaderCols(headerRow, h => h.startsWith('take a picture of the problem'));

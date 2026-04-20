@@ -23,9 +23,9 @@ export async function POST(req: NextRequest) {
 
   // Header-based column lookup (case/whitespace insensitive)
   const headerRow = rows[0] || [];
-  const norm      = (v: unknown) => String(v ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const norm      = (v: unknown) => String(v ?? '').trim().toLowerCase().replace(/\s+/g, ' ').replace(/\?$/, '');
   const problemColIdx: number[] = [];
-  headerRow.forEach((v, i) => { if (norm(v) === 'what is the problem?') problemColIdx.push(i); });
+  headerRow.forEach((v, i) => { if (norm(v) === 'what is the problem') problemColIdx.push(i); });
 
   if (problemColIdx.length === 0) {
     return NextResponse.json(
