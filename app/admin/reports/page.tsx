@@ -4,6 +4,7 @@ import { useAuth } from '@/lib/useAuth';
 import Header from '@/components/Header';
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { parseSpPath } from '@/lib/spUrlParser';
+import * as XLSX from 'xlsx';
 
 interface ReportDef {
   id: string;
@@ -501,13 +502,53 @@ export default function AdminReportsPage() {
                 <span className="text-gray-400 font-normal ml-2">{runLog.length} entries</span>
               </h2>
             </div>
-            <button
-              onClick={loadRunLogData}
-              disabled={runLogLoading}
-              className="text-xs text-[#E31837] hover:text-[#c01430] font-medium disabled:opacity-40"
-            >
-              {runLogLoading ? 'Refreshing…' : '↻ Refresh'}
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => {
+                  const rows = runLog.map(entry => {
+                    const ts = new Date(entry.timestamp);
+                    return {
+                      'Date': ts.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+                      'Time': ts.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }),
+                      'User': entry.userName,
+                      'Email': entry.userEmail,
+                      'Report': entry.reportName,
+                      'Retailer': entry.retailer || '',
+                      'Brand': entry.brand,
+                      'Filename': entry.filename || '',
+                      'SP Upload': entry.spPath ? 'Yes' : '',
+                      'Email Sent': entry.emailSent ? 'Yes' : '',
+                      'Email Recipients': entry.emailRecipients?.join(', ') || '',
+                      'Status': entry.status === 'success' ? 'Success' : 'Error',
+                      'Error': entry.errorMessage || '',
+                    };
+                  });
+                  const wb = XLSX.utils.book_new();
+                  const ws = XLSX.utils.json_to_sheet(rows);
+                  ws['!cols'] = [
+                    { wch: 14 }, { wch: 6 }, { wch: 20 }, { wch: 28 }, { wch: 30 },
+                    { wch: 16 }, { wch: 8 }, { wch: 50 }, { wch: 10 }, { wch: 10 },
+                    { wch: 36 }, { wch: 8 }, { wch: 40 },
+                  ];
+                  XLSX.utils.book_append_sheet(wb, ws, 'Run Log');
+                  XLSX.writeFile(wb, `Run Log ${new Date().toISOString().slice(0, 10)}.xlsx`);
+                }}
+                disabled={runLog.length === 0}
+                className="text-xs text-[#E31837] hover:text-[#c01430] font-medium disabled:opacity-40 flex items-center gap-1"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                Export Excel
+              </button>
+              <button
+                onClick={loadRunLogData}
+                disabled={runLogLoading}
+                className="text-xs text-[#E31837] hover:text-[#c01430] font-medium disabled:opacity-40"
+              >
+                {runLogLoading ? 'Refreshing…' : '↻ Refresh'}
+              </button>
+            </div>
           </div>
 
           {runLog.length === 0 ? (
