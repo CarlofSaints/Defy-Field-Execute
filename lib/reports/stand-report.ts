@@ -426,10 +426,10 @@ function buildPresXml(tplXml: string, slideCount: number): string {
 }
 
 function buildContentTypes(tplCt: string, slideFiles: string[]): string {
-  // Remove existing slide Override entries
-  let out = tplCt.replace(
-    /<Override PartName="\/ppt\/slides\/[^"]*" ContentType="[^"]*slide\+xml"[^/]*\/>/g, '',
-  );
+  // Remove existing slide Override entries + changesInfo (orphaned — file is stripped)
+  let out = tplCt
+    .replace(/<Override PartName="\/ppt\/slides\/[^"]*" ContentType="[^"]*slide\+xml"[^/]*\/>/g, '')
+    .replace(/<Override[^>]*changesInfo[^>]*\/>/g, '');
   // Ensure jpg content type is declared (images are saved as .jpg)
   if (!out.includes('Extension="jpg"')) {
     out = out.replace('<Default Extension="png"', '<Default Extension="jpg" ContentType="image/jpeg"/><Default Extension="png"');
