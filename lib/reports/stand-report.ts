@@ -18,6 +18,7 @@
  */
 import JSZip from 'jszip';
 import * as XLSX from 'xlsx';
+import sharp from 'sharp';
 import fs   from 'fs';
 import path from 'path';
 import { listFilesInSPFolder, downloadSPFileById } from '@/lib/graph-oj';
@@ -121,6 +122,50 @@ function getDateRange(dates: string[]): string {
 function formatDisplayDate(raw: string): string {
   const d = parseDdMmYyyy(raw);
   return d ? fmtDate(d) : raw;
+}
+
+// ─── Image processing ────────────────────────────────────────────────────────
+const MAX_IMG_PX = 1920;    // longest side after resize
+const JPEG_QUALITY = 80;    // JPEG quality (1-100)
+
+interface ProcessedImage {
+  buffer: Buffer;
+  width:  number;   // px after processing
+  height: number;   // px after processing
+}
+
+/**
+ * Auto-rotate (apply EXIF orientation), resize to a reasonable max dimension,
+ * and re-compress as JPEG.  Returns processed buffer + actual pixel dimensions.
+ */
+async function processImage(raw: Buffer): Promise<ProcessedImage> {
+  const { data, info } = await sharp(raw)
+    .rotate()                                   // apply EXIF rotation to pixels
+    .resize({
+      width:  MAX_IMG_PX,
+      height: MAX_IMG_PX,
+      fit:    'inside',                         // maintain aspect ratio
+      withoutEnlargement: true,                 // don't upscale small images
+    })
+    .jpeg({ quality: JPEG_QUALITY, mozjpeg: true })
+    .toBuffer({ resolveWithObject: true });
+
+  return { buffer: data, width: info.width, height: info.height };
+}
+
+/**
+ * Given actual image pixel dimensions and a max bounding box in EMU,
+ * return the (cx, cy) that fits the image with correct aspect ratio.
+ */
+function fitImageEmu(
+  imgW: number, imgH: number,
+  maxCx: number, maxCy: number,
+): { cx: number; cy: number } {
+  const scale = Math.min(maxCx / imgW, maxCy / imgH);
+  return {
+    cx: Math.round(imgW * scale),
+    cy: Math.round(imgH * scale),
+  };
 }
 
 // ─── XML element builders ─────────────────────────────────────────────────────
@@ -243,12 +288,23 @@ interface ContentSlideParams {
   img1RId:   string | null;  // null = no image fetched
   img2RId:   string | null;
   hasImg2:   boolean;        // whether a second URL exists (even if not fetched)
+  img1Dims?: { cx: number; cy: number };  // aspect-ratio-correct EMU dims
+  img2Dims?: { cx: number; cy: number };
 }
 
 function buildContentSlideXml(p: ContentSlideParams): string {
   const { store, repName, dateStr, brand, img1RId, img2RId, hasImg2 } = p;
   const isSingle = !hasImg2;
-  const img1x = isSingle ? IMG1_1UP_X : IMG1_2UP_X;
+
+  // Image 1 dimensions (use actual aspect ratio, fall back to max box)
+  const img1cx = p.img1Dims?.cx ?? IMG_CX;
+  const img1cy = p.img1Dims?.cy ?? IMG_CY;
+  // Centre image horizontally within its column
+  const img1x = isSingle
+    ? Math.floor((SLIDE_W - img1cx) / 2)
+    : IMG1_2UP_X + Math.floor((IMG_CX - img1cx) / 2);
+  // Centre image vertically within the image area
+  const img1y = IMG_Y + Math.floor((IMG_CY - img1cy) / 2);
 
   let id = 2;
   const parts: string[] = [];
@@ -262,36 +318,43 @@ function buildContentSlideXml(p: ContentSlideParams): string {
   // 3. Logo 2 (small – rId3)
   parts.push(spPic(id++, 'rId3', LOGO2_X, LOGO2_Y, LOGO2_CX, LOGO2_CY));
 
-  // 4. Image 1 label
-  parts.push(spText(id++, img1x, LABEL_Y, LABEL_CX, LABEL_CY,
+  // 4. Image 1 label (aligned to original column, not centred image)
+  const label1x = isSingle ? IMG1_1UP_X : IMG1_2UP_X;
+  parts.push(spText(id++, label1x, LABEL_Y, LABEL_CX, LABEL_CY,
     `${brand.toUpperCase()} STAND - 1`, { sz: 1000, bold: true }));
 
   // 5. Image 1
   if (img1RId) {
-    parts.push(spPic(id++, img1RId, img1x, IMG_Y, IMG_CX, IMG_CY));
+    parts.push(spPic(id++, img1RId, img1x, img1y, img1cx, img1cy));
   } else {
-    parts.push(spText(id++, img1x, IMG_Y + Math.floor(IMG_CY / 2) - 200000, IMG_CX, 400000,
+    parts.push(spText(id++, label1x, IMG_Y + Math.floor(IMG_CY / 2) - 200000, IMG_CX, 400000,
       'IMAGE UNAVAILABLE', { sz: 1400, color: '999999', align: 'ctr' }));
   }
 
-  // 6. Date below image 1
-  parts.push(spText(id++, img1x, DATE_Y, DATE_CX, DATE_CY, dateStr,
+  // 6. Date below image 1 (fixed Y position)
+  parts.push(spText(id++, label1x, DATE_Y, DATE_CX, DATE_CY, dateStr,
     { sz: 900, color: '808080' }));
 
   if (hasImg2) {
+    // Image 2 dimensions
+    const img2cx = p.img2Dims?.cx ?? IMG_CX;
+    const img2cy = p.img2Dims?.cy ?? IMG_CY;
+    const img2x = IMG2_2UP_X + Math.floor((IMG_CX - img2cx) / 2);
+    const img2y = IMG_Y + Math.floor((IMG_CY - img2cy) / 2);
+
     // 7. Image 2 label
     parts.push(spText(id++, IMG2_2UP_X, LABEL_Y, LABEL_CX, LABEL_CY,
       `${brand.toUpperCase()} STAND - 2`, { sz: 1000, bold: true }));
 
     // 8. Image 2
     if (img2RId) {
-      parts.push(spPic(id++, img2RId, IMG2_2UP_X, IMG_Y, IMG_CX, IMG_CY));
+      parts.push(spPic(id++, img2RId, img2x, img2y, img2cx, img2cy));
     } else {
       parts.push(spText(id++, IMG2_2UP_X, IMG_Y + Math.floor(IMG_CY / 2) - 200000, IMG_CX, 400000,
         'IMAGE UNAVAILABLE', { sz: 1400, color: '999999', align: 'ctr' }));
     }
 
-    // 9. Date below image 2
+    // 9. Date below image 2 (fixed Y position)
     parts.push(spText(id++, IMG2_2UP_X, DATE_Y, DATE_CX, DATE_CY, dateStr,
       { sz: 900, color: '808080' }));
   }
@@ -367,8 +430,8 @@ function buildContentTypes(tplCt: string, slideFiles: string[]): string {
   let out = tplCt.replace(
     /<Override PartName="\/ppt\/slides\/[^"]*" ContentType="[^"]*slide\+xml"[^/]*\/>/g, '',
   );
-  // Add jpg content type if not already present (template only declares png)
-  if (!out.includes('Extension="jpg"') && !out.includes('Extension="jpeg"')) {
+  // Ensure jpg content type is declared (images are saved as .jpg)
+  if (!out.includes('Extension="jpg"')) {
     out = out.replace('<Default Extension="png"', '<Default Extension="jpg" ContentType="image/jpeg"/><Default Extension="png"');
   }
   // Insert new slide Override entries before </Types>
@@ -460,14 +523,22 @@ export async function generateStandReport(
       const key    = `${id}.jpg`.toLowerCase();
       const itemId = spFiles.get(key);
       if (!itemId) return null;
-      return downloadSPFileById(itemId);
+      const raw = await downloadSPFileById(itemId);
+      if (!raw) return null;
+      // Auto-rotate from EXIF, resize, compress
+      try {
+        return await processImage(raw);
+      } catch (e) {
+        console.warn(`[stand-report] sharp failed for ${key}, using raw:`, e);
+        return { buffer: raw, width: 0, height: 0 } as ProcessedImage;
+      }
     })
   );
 
-  const imageBufs = new Map<string, Buffer>();
-  allIds.forEach((id, i) => { if (fetched[i]) imageBufs.set(id, fetched[i]!); });
+  const imageData = new Map<string, ProcessedImage>();
+  allIds.forEach((id, i) => { if (fetched[i]) imageData.set(id, fetched[i]!); });
 
-  console.log(`[stand-report] SP images: ${imageBufs.size}/${allIds.length} fetched from "${PICTURES_FOLDER}"`);
+  console.log(`[stand-report] SP images: ${imageData.size}/${allIds.length} fetched+processed from "${PICTURES_FOLDER}"`);
 
   // ── 5. Load template PPTX ──────────────────────────────────────────────────
   const tplPath = path.join(process.cwd(), 'public', 'PPT Template AM.pptx');
@@ -518,24 +589,32 @@ export async function generateStandReport(
     const slideNum = i + 2;
     const id1      = g.imageIds[0] ?? '';
     const id2      = g.imageIds[1] ?? '';
-    const buf1     = id1 ? imageBufs.get(id1) : undefined;
-    const buf2     = id2 ? imageBufs.get(id2) : undefined;
+    const proc1    = id1 ? imageData.get(id1) : undefined;
+    const proc2    = id2 ? imageData.get(id2) : undefined;
     const hasImg2  = g.imageIds.length > 1;
 
     let mediaName1: string | null = null;
     let mediaName2: string | null = null;
 
-    if (buf1) {
+    if (proc1) {
       mediaName1 = `stand_img_${globalImgCounter++}.jpg`;
-      outZip.file(`ppt/media/${mediaName1}`, buf1);
+      outZip.file(`ppt/media/${mediaName1}`, proc1.buffer);
     }
-    if (buf2) {
+    if (proc2) {
       mediaName2 = `stand_img_${globalImgCounter++}.jpg`;
-      outZip.file(`ppt/media/${mediaName2}`, buf2);
+      outZip.file(`ppt/media/${mediaName2}`, proc2.buffer);
     }
 
-    const img1RId = buf1 ? 'rId4' : null;
-    const img2RId = buf2 ? 'rId5' : null;
+    const img1RId = proc1 ? 'rId4' : null;
+    const img2RId = proc2 ? 'rId5' : null;
+
+    // Calculate aspect-ratio-correct bounding boxes
+    const img1Dims = (proc1 && proc1.width > 0 && proc1.height > 0)
+      ? fitImageEmu(proc1.width, proc1.height, IMG_CX, IMG_CY)
+      : undefined;
+    const img2Dims = (proc2 && proc2.width > 0 && proc2.height > 0)
+      ? fitImageEmu(proc2.width, proc2.height, IMG_CX, IMG_CY)
+      : undefined;
 
     const slideFile     = `slide${slideNum}.xml`;
     const slideRelsFile = `_rels/slide${slideNum}.xml.rels`;
@@ -548,6 +627,8 @@ export async function generateStandReport(
       img1RId,
       img2RId,
       hasImg2,
+      img1Dims,
+      img2Dims,
     }));
     outZip.file(`ppt/slides/${slideRelsFile}`, buildContentSlideRels(mediaName1, mediaName2));
     allSlideFiles.push(slideFile);
@@ -576,7 +657,7 @@ export async function generateStandReport(
   const buffer = Buffer.from(await outZip.generateAsync({
     type:       'nodebuffer',
     compression: 'DEFLATE',
-    compressionOptions: { level: 6 },
+    compressionOptions: { level: 9 },
   }));
 
   return { buffer, filename, rawDates };
