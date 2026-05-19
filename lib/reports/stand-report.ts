@@ -400,10 +400,11 @@ function buildContentSlideRels(
 
 // ─── Presentation XML helpers ─────────────────────────────────────────────────
 function buildPresRels(tplRels: string, slideFiles: string[]): string {
-  // Remove existing slide Relationship entries + changesInfo (co-authoring artifact → repair dialog)
+  // Remove: slides (rebuilt below), changesInfo, customXml (SharePoint artifacts)
   const stripped = tplRels
     .replace(/<Relationship[^>]+Type="[^"]*\/slide"[^>]*\/>/g, '')
-    .replace(/<Relationship[^>]+Type="[^"]*changesInfo[^"]*"[^>]*\/>/g, '');
+    .replace(/<Relationship[^>]+Type="[^"]*changesInfo[^"]*"[^>]*\/>/g, '')
+    .replace(/<Relationship[^>]+Type="[^"]*\/customXml"[^>]*\/>/g, '');
   // Insert new slide entries before </Relationships>
   const slideRels = slideFiles
     .map((file, i) => {
@@ -426,10 +427,11 @@ function buildPresXml(tplXml: string, slideCount: number): string {
 }
 
 function buildContentTypes(tplCt: string, slideFiles: string[]): string {
-  // Remove existing slide Override entries + changesInfo (orphaned — file is stripped)
+  // Remove: slide overrides (rebuilt below), changesInfo, customXml (SharePoint artifacts)
   let out = tplCt
     .replace(/<Override PartName="\/ppt\/slides\/[^"]*" ContentType="[^"]*slide\+xml"[^/]*\/>/g, '')
-    .replace(/<Override[^>]*changesInfo[^>]*\/>/g, '');
+    .replace(/<Override[^>]*changesInfo[^>]*\/>/g, '')
+    .replace(/<Override[^>]*customXml[^>]*\/>/g, '');
   // Ensure jpg content type is declared (images are saved as .jpg)
   if (!out.includes('Extension="jpg"')) {
     out = out.replace('<Default Extension="png"', '<Default Extension="jpg" ContentType="image/jpeg"/><Default Extension="png"');
@@ -557,16 +559,21 @@ export async function generateStandReport(
   const outZip = new JSZip();
 
   // Copy all template files except slides & manifest files we'll rebuild.
-  // Also skip changesInfos/ — these are co-authoring artifacts that cause repair dialogs.
+  // Also skip: changesInfos/ (co-authoring), customXml/ (SharePoint metadata)
+  // — both are artifacts that trigger PowerPoint repair dialogs.
   const skipSet = new Set([
     'ppt/slides/slide1.xml', 'ppt/slides/slide2.xml', 'ppt/slides/slide3.xml',
     'ppt/slides/_rels/slide1.xml.rels', 'ppt/slides/_rels/slide2.xml.rels',
     'ppt/slides/_rels/slide3.xml.rels',
     'ppt/presentation.xml', 'ppt/_rels/presentation.xml.rels',
     '[Content_Types].xml',
+    'docProps/app.xml',
+    'docProps/custom.xml',  // SharePoint custom properties — orphaned without customXml/
+    '_rels/.rels',          // rebuild to strip custom.xml reference
   ]);
   for (const [name, file] of Object.entries(tplZip.files)) {
-    if (file.dir || skipSet.has(name) || name.startsWith('ppt/changesInfos/')) continue;
+    if (file.dir || skipSet.has(name)) continue;
+    if (name.startsWith('ppt/changesInfos/') || name.startsWith('customXml/')) continue;
     outZip.file(name, await file.async('nodebuffer'));
   }
 
@@ -646,6 +653,42 @@ export async function generateStandReport(
   outZip.file('ppt/presentation.xml',              buildPresXml(tplPresXml, allSlideFiles.length));
   outZip.file('ppt/_rels/presentation.xml.rels',   buildPresRels(tplPresRels, allSlideFiles));
   outZip.file('[Content_Types].xml',               buildContentTypes(tplCtXml, allSlideFiles));
+
+  // Rebuild docProps/app.xml with correct slide count (template hardcodes 3)
+  const totalSlides = allSlideFiles.length;
+  const slideTitles = allSlideFiles.map(() => '<vt:lpstr>PowerPoint Presentation</vt:lpstr>').join('');
+  outZip.file('docProps/app.xml',
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">` +
+      `<Application>Microsoft Office PowerPoint</Application>` +
+      `<PresentationFormat>Custom</PresentationFormat>` +
+      `<Slides>${totalSlides}</Slides>` +
+      `<Notes>0</Notes><HiddenSlides>0</HiddenSlides>` +
+      `<ScaleCrop>false</ScaleCrop>` +
+      `<HeadingPairs><vt:vector size="6" baseType="variant">` +
+        `<vt:variant><vt:lpstr>Fonts Used</vt:lpstr></vt:variant><vt:variant><vt:i4>3</vt:i4></vt:variant>` +
+        `<vt:variant><vt:lpstr>Theme</vt:lpstr></vt:variant><vt:variant><vt:i4>1</vt:i4></vt:variant>` +
+        `<vt:variant><vt:lpstr>Slide Titles</vt:lpstr></vt:variant><vt:variant><vt:i4>${totalSlides}</vt:i4></vt:variant>` +
+      `</vt:vector></HeadingPairs>` +
+      `<TitlesOfParts><vt:vector size="${3 + 1 + totalSlides}" baseType="lpstr">` +
+        `<vt:lpstr>Arial (Headings)</vt:lpstr><vt:lpstr>Calibri</vt:lpstr><vt:lpstr>Lato-Black</vt:lpstr>` +
+        `<vt:lpstr>Office Theme</vt:lpstr>` +
+        slideTitles +
+      `</vt:vector></TitlesOfParts>` +
+      `<LinksUpToDate>false</LinksUpToDate><SharedDoc>false</SharedDoc><HyperlinksChanged>false</HyperlinksChanged>` +
+      `<AppVersion>16.0000</AppVersion>` +
+    `</Properties>`,
+  );
+
+  // Rebuild _rels/.rels — strip custom-properties ref (docProps/custom.xml removed with customXml)
+  outZip.file('_rels/.rels',
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+      `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>` +
+      `<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>` +
+      `<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>` +
+    `</Relationships>`,
+  );
 
   // ── 9. Filename & output ───────────────────────────────────────────────────
   const today = new Date();
