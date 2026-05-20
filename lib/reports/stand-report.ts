@@ -213,7 +213,7 @@ function spTitleBar(id: number, store: string): string {
       `<p:txBody>` +
         `<a:bodyPr anchor="ctr"/>` +
         `<a:lstStyle>` +
-          `<a:lvl1pPr algn="l"><a:defRPr sz="4400"><a:solidFill><a:srgbClr val="tx1"/></a:solidFill></a:defRPr></a:lvl1pPr>` +
+          `<a:lvl1pPr algn="l"><a:defRPr sz="4400"><a:solidFill><a:schemeClr val="tx1"/></a:solidFill></a:defRPr></a:lvl1pPr>` +
         `</a:lstStyle>` +
         `<a:p>` +
           `<a:r>` +
@@ -427,11 +427,12 @@ function buildPresXml(tplXml: string, slideCount: number): string {
 }
 
 function buildContentTypes(tplCt: string, slideFiles: string[]): string {
-  // Remove: slide overrides (rebuilt below), changesInfo, customXml (SharePoint artifacts)
+  // Remove: slide overrides (rebuilt below), changesInfo, customXml, custom.xml (SharePoint artifacts)
   let out = tplCt
     .replace(/<Override PartName="\/ppt\/slides\/[^"]*" ContentType="[^"]*slide\+xml"[^/]*\/>/g, '')
     .replace(/<Override[^>]*changesInfo[^>]*\/>/g, '')
-    .replace(/<Override[^>]*customXml[^>]*\/>/g, '');
+    .replace(/<Override[^>]*customXml[^>]*\/>/g, '')
+    .replace(/<Override[^>]*docProps\/custom\.xml[^>]*\/>/g, '');
   // Ensure jpg content type is declared (images are saved as .jpg)
   if (!out.includes('Extension="jpg"')) {
     out = out.replace('<Default Extension="png"', '<Default Extension="jpg" ContentType="image/jpeg"/><Default Extension="png"');
