@@ -44,8 +44,8 @@ const LOGO2_CX = 371422;  const LOGO2_CY = 385321;
 
 // Data images
 const IMG_Y   = 1651000;
-const IMG_CX  = 5080000;
-const IMG_CY  = 5080000;
+const IMG_CX  = 4788000;  // 13.3 cm
+const IMG_CY  = 4788000;  // 13.3 cm
 const IMG1_2UP_X = 63500;   // left image (2-up layout)
 const IMG2_2UP_X = 5207000; // right image (2-up layout)
 const IMG1_1UP_X = Math.floor((SLIDE_W - IMG_CX) / 2); // centred (1-up)
@@ -135,17 +135,49 @@ interface ProcessedImage {
 }
 
 /**
- * Auto-rotate (apply EXIF orientation), resize to a reasonable max dimension,
- * and re-compress as JPEG.  Returns processed buffer + actual pixel dimensions.
+ * Read EXIF orientation, apply explicit rotation, resize, and re-compress.
+ *
+ * EXIF orientation values:
+ *   1 = normal           5 = transpose
+ *   2 = flip horizontal  6 = 90° CW  (phone held portrait, home-button right)
+ *   3 = 180°             7 = transverse
+ *   4 = flip vertical    8 = 90° CCW (phone held portrait, home-button left)
+ *
+ * If EXIF orientation is missing (stripped by Perigee/SharePoint) AND the raw
+ * pixels are landscape (width > height * 1.3) we assume the photo was taken
+ * portrait and rotate 90° CW as a best-effort fix.
  */
 async function processImage(raw: Buffer): Promise<ProcessedImage> {
+  const meta = await sharp(raw).metadata();
+  const orientation = meta.orientation;          // undefined if EXIF stripped
+  const rawW = meta.width ?? 0;
+  const rawH = meta.height ?? 0;
+
+  // Map EXIF orientation → clockwise degrees
+  let rotateDeg = 0;
+  if (orientation) {
+    switch (orientation) {
+      case 3: rotateDeg = 180; break;
+      case 6: rotateDeg = 90;  break;
+      case 8: rotateDeg = 270; break;
+      // 2,4,5,7 involve flips — rare from phone cameras, skip for now
+    }
+  } else if (rawW > rawH * 1.3) {
+    // No EXIF but pixels are landscape — likely a stripped portrait photo
+    rotateDeg = 90;
+  }
+
+  console.log(
+    `[stand-report] image ${rawW}x${rawH} EXIF orientation=${orientation ?? 'none'} → rotate ${rotateDeg}°`,
+  );
+
   const { data, info } = await sharp(raw)
-    .rotate()                                   // apply EXIF rotation to pixels
+    .rotate(rotateDeg)                          // explicit rotation (0 = no-op)
     .resize({
       width:  MAX_IMG_PX,
       height: MAX_IMG_PX,
-      fit:    'inside',                         // maintain aspect ratio
-      withoutEnlargement: true,                 // don't upscale small images
+      fit:    'inside',
+      withoutEnlargement: true,
     })
     .jpeg({ quality: JPEG_QUALITY, mozjpeg: true })
     .toBuffer({ resolveWithObject: true });
@@ -153,20 +185,6 @@ async function processImage(raw: Buffer): Promise<ProcessedImage> {
   return { buffer: data, width: info.width, height: info.height };
 }
 
-/**
- * Given actual image pixel dimensions and a max bounding box in EMU,
- * return the (cx, cy) that fits the image with correct aspect ratio.
- */
-function fitImageEmu(
-  imgW: number, imgH: number,
-  maxCx: number, maxCy: number,
-): { cx: number; cy: number } {
-  const scale = Math.min(maxCx / imgW, maxCy / imgH);
-  return {
-    cx: Math.round(imgW * scale),
-    cy: Math.round(imgH * scale),
-  };
-}
 
 // ─── XML element builders ─────────────────────────────────────────────────────
 function spText(
@@ -234,7 +252,7 @@ function spPic(id: number, rId: string, x: number, y: number, cx: number, cy: nu
     `<p:pic>` +
       `<p:nvPicPr>` +
         `<p:cNvPr id="${id}" name="pic${id}"/>` +
-        `<p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr>` +
+        `<p:cNvPicPr><a:picLocks/></p:cNvPicPr>` +
         `<p:nvPr/>` +
       `</p:nvPicPr>` +
       `<p:blipFill>` +
@@ -288,23 +306,15 @@ interface ContentSlideParams {
   img1RId:   string | null;  // null = no image fetched
   img2RId:   string | null;
   hasImg2:   boolean;        // whether a second URL exists (even if not fetched)
-  img1Dims?: { cx: number; cy: number };  // aspect-ratio-correct EMU dims
-  img2Dims?: { cx: number; cy: number };
 }
 
 function buildContentSlideXml(p: ContentSlideParams): string {
   const { store, repName, dateStr, brand, img1RId, img2RId, hasImg2 } = p;
   const isSingle = !hasImg2;
 
-  // Image 1 dimensions (use actual aspect ratio, fall back to max box)
-  const img1cx = p.img1Dims?.cx ?? IMG_CX;
-  const img1cy = p.img1Dims?.cy ?? IMG_CY;
-  // Centre image horizontally within its column
-  const img1x = isSingle
-    ? Math.floor((SLIDE_W - img1cx) / 2)
-    : IMG1_2UP_X + Math.floor((IMG_CX - img1cx) / 2);
-  // Centre image vertically within the image area
-  const img1y = IMG_Y + Math.floor((IMG_CY - img1cy) / 2);
+  // Fixed 13.3cm x 13.3cm image placement (no aspect ratio fitting)
+  const img1x = isSingle ? IMG1_1UP_X : IMG1_2UP_X;
+  const img1y = IMG_Y;
 
   let id = 2;
   const parts: string[] = [];
@@ -325,7 +335,7 @@ function buildContentSlideXml(p: ContentSlideParams): string {
 
   // 5. Image 1
   if (img1RId) {
-    parts.push(spPic(id++, img1RId, img1x, img1y, img1cx, img1cy));
+    parts.push(spPic(id++, img1RId, img1x, img1y, IMG_CX, IMG_CY));
   } else {
     parts.push(spText(id++, label1x, IMG_Y + Math.floor(IMG_CY / 2) - 200000, IMG_CX, 400000,
       'IMAGE UNAVAILABLE', { sz: 1400, color: '999999', align: 'ctr' }));
@@ -333,22 +343,16 @@ function buildContentSlideXml(p: ContentSlideParams): string {
 
   // 6. Date below image 1 (fixed Y position)
   parts.push(spText(id++, label1x, DATE_Y, DATE_CX, DATE_CY, dateStr,
-    { sz: 900, color: '808080' }));
+    { sz: 1200, bold: true, color: '808080' }));
 
   if (hasImg2) {
-    // Image 2 dimensions
-    const img2cx = p.img2Dims?.cx ?? IMG_CX;
-    const img2cy = p.img2Dims?.cy ?? IMG_CY;
-    const img2x = IMG2_2UP_X + Math.floor((IMG_CX - img2cx) / 2);
-    const img2y = IMG_Y + Math.floor((IMG_CY - img2cy) / 2);
-
     // 7. Image 2 label
     parts.push(spText(id++, IMG2_2UP_X, LABEL_Y, LABEL_CX, LABEL_CY,
       `${brand.toUpperCase()} STAND - 2`, { sz: 1000, bold: true }));
 
     // 8. Image 2
     if (img2RId) {
-      parts.push(spPic(id++, img2RId, img2x, img2y, img2cx, img2cy));
+      parts.push(spPic(id++, img2RId, IMG2_2UP_X, IMG_Y, IMG_CX, IMG_CY));
     } else {
       parts.push(spText(id++, IMG2_2UP_X, IMG_Y + Math.floor(IMG_CY / 2) - 200000, IMG_CX, 400000,
         'IMAGE UNAVAILABLE', { sz: 1400, color: '999999', align: 'ctr' }));
@@ -356,7 +360,7 @@ function buildContentSlideXml(p: ContentSlideParams): string {
 
     // 9. Date below image 2 (fixed Y position)
     parts.push(spText(id++, IMG2_2UP_X, DATE_Y, DATE_CX, DATE_CY, dateStr,
-      { sz: 900, color: '808080' }));
+      { sz: 1200, bold: true, color: '808080' }));
   }
 
   // 10. Rep name (bottom-right, small)
@@ -616,14 +620,6 @@ export async function generateStandReport(
     const img1RId = proc1 ? 'rId4' : null;
     const img2RId = proc2 ? 'rId5' : null;
 
-    // Calculate aspect-ratio-correct bounding boxes
-    const img1Dims = (proc1 && proc1.width > 0 && proc1.height > 0)
-      ? fitImageEmu(proc1.width, proc1.height, IMG_CX, IMG_CY)
-      : undefined;
-    const img2Dims = (proc2 && proc2.width > 0 && proc2.height > 0)
-      ? fitImageEmu(proc2.width, proc2.height, IMG_CX, IMG_CY)
-      : undefined;
-
     const slideFile     = `slide${slideNum}.xml`;
     const slideRelsFile = `_rels/slide${slideNum}.xml.rels`;
 
@@ -635,8 +631,6 @@ export async function generateStandReport(
       img1RId,
       img2RId,
       hasImg2,
-      img1Dims,
-      img2Dims,
     }));
     outZip.file(`ppt/slides/${slideRelsFile}`, buildContentSlideRels(mediaName1, mediaName2));
     allSlideFiles.push(slideFile);
