@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx';
 import path from 'path';
 import fs from 'fs';
 import type { StoreMapEntry } from '@/lib/storeMapData';
+import { getCriticalLineSet } from '@/lib/criticalLinesData';
 import { buildMenuSheet, applyHeaderStyle, applyDataStyle, addNavRow } from './build-menu';
 
 // ─── Category mapping ───────────────────────────────────────────────────────
@@ -30,13 +31,6 @@ const CATEGORY_MAP: Record<string, { subCat: string; cat: string }> = {
   'SIDE BY SIDES':               { subCat: 'FRIDGE',          cat: 'FRIDGE' },
   'BOX SETS':                    { subCat: 'BOX SET',         cat: 'BOX SET' },
 };
-
-// Codes that appear in the CRITICAL LINES section of the form
-const CRITICAL_LINE_CODES = new Set([
-  'DBO489E', 'DBO496E', 'DBO767', 'DBO768', 'DBO775',
-  'DSS694',  'DGS906',  'DAC447', 'DAC627', 'DAC675',
-  'DFF447',  'DFF436',  'DFF463', 'DAW389', 'DWD318', 'DTL160',
-]);
 
 // Brand colour (used locally for pivot highlights etc.)
 const DEFY_RED = 'E31837';
@@ -193,6 +187,9 @@ export async function generateMakroStockCount(
   retailer = 'MAKRO',
 ): Promise<{ buffer: Buffer; filename: string; rawDates: string[]; weekLabel: string }> {
 
+  // ── 0. Load critical lines from control file ────────────────────────────────
+  const criticalLineCodes = getCriticalLineSet(brand, retailer);
+
   // ── 1. Parse raw Perigee Excel ─────────────────────────────────────────────
   const inputWb = XLSX.read(fileBuffer, { type: 'buffer' });
   const inputWs = inputWb.Sheets[inputWb.SheetNames[0]];
@@ -344,7 +341,7 @@ export async function generateMakroStockCount(
         province,
         category:      col.cat,
         keyCat:        col.cat,
-        criticalLines: CRITICAL_LINE_CODES.has(col.productCode) ? 'YES' : 'NO',
+        criticalLines: criticalLineCodes.has(col.productCode) ? 'YES' : 'NO',
       });
     }
   }

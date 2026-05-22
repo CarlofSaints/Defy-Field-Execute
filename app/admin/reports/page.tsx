@@ -43,6 +43,17 @@ interface RunLogEntry {
 
 const ALL_BRANDS      = ['Defy', 'Beko'];
 const ALL_OUTPUT_TYPES = ['Excel', 'PPT'];
+const CHANNELS        = ['MAKRO', 'GAME', 'INDEPENDENTS', 'TAFELBERG', "HIRSCH'S"];
+
+interface CriticalLineEntry {
+  modelNumber:        string;
+  productDescription: string;
+}
+interface CriticalLinesConfig {
+  brand:   string;
+  channel: string;
+  lines:   CriticalLineEntry[];
+}
 
 type Toast = { message: string; type: 'success' | 'error' };
 
@@ -93,6 +104,13 @@ export default function AdminReportsPage() {
   // Store Province Mapping
   const [storeMapCount,      setStoreMapCount]      = useState<number | null>(null);
   const [storeMapUploading,  setStoreMapUploading]  = useState(false);
+
+  // Critical Lines
+  const [criticalConfigs,       setCriticalConfigs]       = useState<CriticalLinesConfig[]>([]);
+  const [critBrand,             setCritBrand]             = useState('DEFY');
+  const [critChannel,           setCritChannel]           = useState('MAKRO');
+  const [critUploading,         setCritUploading]         = useState(false);
+  const [critExpanded,          setCritExpanded]          = useState<string | null>(null);
 
   // App Settings — SP image path
   const [picturesPath,        setPicturesPath]        = useState('');
@@ -150,6 +168,11 @@ export default function AdminReportsPage() {
     }
   }, []);
 
+  const loadCriticalLines = useCallback(async () => {
+    const res = await fetch('/api/critical-lines');
+    if (res.ok) setCriticalConfigs(await res.json());
+  }, []);
+
   const loadRunLogData = useCallback(async () => {
     setRunLogLoading(true);
     const res = await fetch('/api/run-log');
@@ -160,9 +183,10 @@ export default function AdminReportsPage() {
   useEffect(() => {
     loadReports();
     loadStoreMapCount();
+    loadCriticalLines();
     loadRunLogData();
     loadAppSettings();
-  }, [loadReports, loadStoreMapCount, loadRunLogData, loadAppSettings]);
+  }, [loadReports, loadStoreMapCount, loadCriticalLines, loadRunLogData, loadAppSettings]);
 
   async function handleSavePicturesPath() {
     setPicturesPathSaving(true);
@@ -217,6 +241,42 @@ export default function AdminReportsPage() {
     } else {
       const { error } = await res.json().catch(() => ({ error: 'Upload failed' }));
       notify(error || 'Upload failed', 'error');
+    }
+  }
+
+  async function handleCriticalUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setCritUploading(true);
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('brand', critBrand);
+    fd.append('channel', critChannel);
+    const res = await fetch('/api/critical-lines', { method: 'POST', body: fd });
+    setCritUploading(false);
+    e.target.value = '';
+    if (res.ok) {
+      const { count } = await res.json();
+      notify(`${critBrand} / ${critChannel} — ${count} critical line${count === 1 ? '' : 's'} loaded`);
+      loadCriticalLines();
+    } else {
+      const { error } = await res.json().catch(() => ({ error: 'Upload failed' }));
+      notify(error || 'Upload failed', 'error');
+    }
+  }
+
+  async function handleCriticalDelete(brand: string, channel: string) {
+    if (!confirm(`Remove critical lines for ${brand} / ${channel}?`)) return;
+    const res = await fetch('/api/critical-lines', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ brand, channel }),
+    });
+    if (res.ok) {
+      notify(`${brand} / ${channel} critical lines removed`);
+      loadCriticalLines();
+    } else {
+      notify('Failed to delete', 'error');
     }
   }
 
@@ -687,6 +747,138 @@ export default function AdminReportsPage() {
                 />
               </label>
             </div>
+          </div>
+        </div>
+
+        {/* Critical Lines Management */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="border-l-4 border-[#E31837] px-6 py-4">
+            <h2 className="font-semibold text-gray-800">Critical Lines</h2>
+            <p className="text-sm text-gray-500 mt-0.5">
+              Upload a control file per brand & channel to define which products are critical lines.
+              The <strong>Critical Line OOS</strong> sheet in Stock Count reports will use this data.
+            </p>
+          </div>
+          <div className="px-6 pb-6 space-y-4">
+            <p className="text-xs text-gray-500">
+              Expected columns: <span className="font-mono bg-gray-100 px-1 rounded">MODEL NUMBER</span>
+              {' · '}<span className="font-mono bg-gray-100 px-1 rounded">PRODUCT DESCRIPTION</span>
+              {' '}(description is optional)
+            </p>
+
+            <div className="flex items-end gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">Brand</label>
+                <select
+                  value={critBrand}
+                  onChange={e => setCritBrand(e.target.value)}
+                  className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#E31837]/30 focus:border-[#E31837]"
+                >
+                  {ALL_BRANDS.map(b => (
+                    <option key={b} value={b.toUpperCase()}>{b}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">Channel</label>
+                <select
+                  value={critChannel}
+                  onChange={e => setCritChannel(e.target.value)}
+                  className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#E31837]/30 focus:border-[#E31837]"
+                >
+                  {CHANNELS.map(c => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className={`inline-block cursor-pointer px-5 py-2 rounded-lg text-sm font-semibold text-white transition-colors ${
+                  critUploading ? 'bg-gray-400 cursor-not-allowed' : 'bg-[#E31837] hover:bg-[#c01430]'
+                }`}>
+                  {critUploading ? 'Uploading…' : 'Upload File'}
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls"
+                    className="hidden"
+                    onChange={handleCriticalUpload}
+                    disabled={critUploading}
+                  />
+                </label>
+              </div>
+            </div>
+
+            {/* Current configs */}
+            {criticalConfigs.length > 0 && (
+              <div className="border border-gray-100 rounded-lg overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 border-b border-gray-100">
+                    <tr>
+                      <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Brand</th>
+                      <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Channel</th>
+                      <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Lines</th>
+                      <th className="px-4 py-2.5" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {criticalConfigs.map(cfg => {
+                      const key = `${cfg.brand}|${cfg.channel}`;
+                      const isExpanded = critExpanded === key;
+                      return (
+                        <tr key={key} className="hover:bg-gray-50 transition-colors group">
+                          <td className="px-4 py-2.5">
+                            <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs font-medium">{cfg.brand}</span>
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <span className="px-2 py-0.5 bg-amber-50 text-amber-700 rounded text-xs font-medium">{cfg.channel}</span>
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <button
+                              onClick={() => setCritExpanded(isExpanded ? null : key)}
+                              className="text-xs text-gray-700 hover:text-[#E31837] font-medium"
+                            >
+                              {cfg.lines.length} product{cfg.lines.length === 1 ? '' : 's'}
+                              <span className="ml-1 text-gray-400">{isExpanded ? '▲' : '▼'}</span>
+                            </button>
+                            {isExpanded && (
+                              <div className="mt-2 max-h-48 overflow-y-auto border border-gray-100 rounded bg-gray-50 text-xs">
+                                <table className="w-full">
+                                  <thead>
+                                    <tr className="border-b border-gray-200">
+                                      <th className="text-left px-2 py-1 font-semibold text-gray-500">Model</th>
+                                      <th className="text-left px-2 py-1 font-semibold text-gray-500">Description</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-gray-100">
+                                    {cfg.lines.map((line, i) => (
+                                      <tr key={i}>
+                                        <td className="px-2 py-1 font-mono text-gray-800">{line.modelNumber}</td>
+                                        <td className="px-2 py-1 text-gray-600">{line.productDescription || '—'}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-2.5 text-right">
+                            <button
+                              onClick={() => handleCriticalDelete(cfg.brand, cfg.channel)}
+                              className="text-xs text-red-600 hover:text-red-800 font-medium opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              Delete
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {criticalConfigs.length === 0 && (
+              <p className="text-sm text-gray-400">No critical lines configured yet. Upload a file to get started.</p>
+            )}
           </div>
         </div>
 
