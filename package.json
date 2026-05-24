@@ -10,6 +10,7 @@
   "dependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@types/jszip": "^3.4.0",
+    "@vercel/blob": "^0.27.3",
     "bcryptjs": "^3.0.3",
     "exceljs": "^4.4.0",
     "jszip": "^3.10.1",

@@ -4,7 +4,8 @@ import { randomUUID } from 'crypto';
 import { generateMakroStockCount, analyzeStockCount } from '@/lib/reports/makro-stock-count';
 import { generateRedFlag, extractRedFlagProblems } from '@/lib/reports/red-flag';
 import { generateStandReport } from '@/lib/reports/stand-report';
-import { generateTrainingFeedback } from '@/lib/reports/training-feedback';
+import { generateTrainingFeedback, type TrainingSummaryRow } from '@/lib/reports/training-feedback';
+import { loadMonthUploads, archiveUpload } from '@/lib/uploadArchive';
 import { generateActivationReport } from '@/lib/reports/activation-report';
 import { generateServiceCallReport } from '@/lib/reports/service-call-report';
 import { analyzeChannelMismatch, filterByChannel } from '@/lib/reports/channel-check';
@@ -239,9 +240,22 @@ export async function POST(req: NextRequest) {
       }
 
       case 'training-feedback': {
-        const { buffer, rawDates } = await generateTrainingFeedback(fileBuffer, brand);
+        // Determine current month for MTD history
+        const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
+        const historicalRows = await loadMonthUploads<TrainingSummaryRow>(
+          'training-feedback', brand, currentMonth,
+        );
+
+        const { buffer, rawDates, archiveRows } = await generateTrainingFeedback(
+          fileBuffer, brand, historicalRows,
+        );
         const filename = buildFilename(brand, dataFormat, channel, rawDates);
         results.push({ excelBuffer: buffer, filename, rawDates, weekLabel: '', retailer: '', label: '' });
+
+        // Archive this upload's parsed rows for future MTD accumulation
+        await archiveUpload('training-feedback', brand, currentMonth, archiveRows).catch(e => {
+          console.error('[generate] Training archive failed:', e instanceof Error ? e.message : e);
+        });
         break;
       }
 
