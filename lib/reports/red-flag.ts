@@ -76,6 +76,17 @@ interface RedFlagRow {
   escalate: string;
 }
 
+export interface RedFlagArchiveRow {
+  repName:  string;
+  store:    string;
+  date:     string;
+  problem:  string;
+  model:    string;
+  imageId:  string;
+  escalate: string;
+  label:    'SALES' | 'MARKETING';
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function safeSheet(name: string): string {
   return name.replace(/[/\\*?:[\]]/g, '').trim().slice(0, 31) || 'OTHER';
@@ -150,7 +161,8 @@ export async function generateRedFlag(
   brand:         string,
   label:         'SALES' | 'MARKETING',
   problemFilter: string[],   // only rows whose problem is in this list
-): Promise<{ buffer: Buffer; filename: string; rawDates: string[] }> {
+  historicalRows?: RedFlagArchiveRow[],
+): Promise<{ buffer: Buffer; filename: string; rawDates: string[]; archiveRows: RedFlagArchiveRow[] }> {
 
   // ── 1. Parse raw Perigee export ────────────────────────────────────────────
   const inputWb = XLSX.read(fileBuffer, { type: 'buffer' });
@@ -204,6 +216,18 @@ export async function generateRedFlag(
   }
 
   const rawDates = filteredRows.map(r => r.date).filter(d => d.includes('/'));
+
+  // Build archive rows for blob persistence
+  const archiveRows: RedFlagArchiveRow[] = filteredRows.map(r => ({
+    repName:  r.repName,
+    store:    r.store,
+    date:     r.date,
+    problem:  r.problem,
+    model:    r.model,
+    imageId:  r.imageId,
+    escalate: r.escalate,
+    label,
+  }));
 
   // ── 3. Pre-fetch images from SharePoint ────────────────────────────────────
   // Images saved by VBA as "{imageId}.jpg" in the PERIGEE IMAGE DOWNLOADS folder.
@@ -367,5 +391,5 @@ export async function generateRedFlag(
   }
 
   const buffer = Buffer.from(await wb.xlsx.writeBuffer());
-  return { buffer, filename, rawDates };
+  return { buffer, filename, rawDates, archiveRows };
 }

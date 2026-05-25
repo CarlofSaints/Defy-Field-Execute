@@ -88,11 +88,26 @@ function daysBetween(from: Date, to: Date): number | null {
   return diff >= 0 ? diff : null;
 }
 
+export interface ServiceCallArchiveRow {
+  repName:     string;
+  date:        string;
+  place:       string;
+  logType:     string;
+  logNumber:   string;
+  product:     string;
+  loggedDate:  string;
+  daysSince:   number | null;
+  customer:    string;
+  phone:       string;
+  description: string;
+}
+
 // ─── Main export ──────────────────────────────────────────────────────────────
 export async function generateServiceCallReport(
   fileBuffer: Buffer,
   brand: string,
-): Promise<{ buffer: Buffer; filename: string; rawDates: string[] }> {
+  historicalRows?: ServiceCallArchiveRow[],
+): Promise<{ buffer: Buffer; filename: string; rawDates: string[]; archiveRows: ServiceCallArchiveRow[] }> {
 
   // ── 1. Parse raw Perigee export ────────────────────────────────────────────
   const inputWb = XLSX.read(fileBuffer, { type: 'buffer' });
@@ -144,6 +159,21 @@ export async function generateServiceCallReport(
   const rawDates  = rows.map(r => r.date).filter(d => d.includes('/'));
   const dateLabel = latestDateLabel(rawDates);
   const sheetName = `${brand.toUpperCase()} SERVICE CALLS`;
+
+  // Build archive rows for blob persistence
+  const archiveRows: ServiceCallArchiveRow[] = rows.map(r => ({
+    repName:     r.repName,
+    date:        r.date,
+    place:       r.place,
+    logType:     r.logType,
+    logNumber:   r.logNumber,
+    product:     r.product,
+    loggedDate:  r.loggedDate,
+    daysSince:   r.daysSince,
+    customer:    r.customer,
+    phone:       r.phone,
+    description: r.description,
+  }));
 
   // ── 3. Filename ────────────────────────────────────────────────────────────
   const filename = `${brand.toUpperCase()}_SERVICE_CALL_REPORT_${dateLabel}.xlsx`;
@@ -233,5 +263,5 @@ export async function generateServiceCallReport(
     .forEach((w, idx) => { ws.getColumn(idx + 1).width = w; });
 
   const buffer = Buffer.from(await wb.xlsx.writeBuffer());
-  return { buffer, filename, rawDates };
+  return { buffer, filename, rawDates, archiveRows };
 }

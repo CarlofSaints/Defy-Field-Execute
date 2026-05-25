@@ -112,11 +112,23 @@ function latestDateLabel(dates: string[]): string {
   return `${String(d.getDate()).padStart(2,'0')}-${String(d.getMonth()+1).padStart(2,'0')}-${d.getFullYear()}`;
 }
 
+export interface ActivationArchiveRow {
+  repName:   string;
+  date:      string;
+  place:     string;
+  startDate: string;
+  endDate:   string;
+  type:      string;
+  imageIds:  string[];
+  channel:   string;
+}
+
 // ─── Main export ──────────────────────────────────────────────────────────────
 export async function generateActivationReport(
   fileBuffer: Buffer,
   brand: string,
-): Promise<{ buffer: Buffer; filename: string; rawDates: string[] }> {
+  historicalRows?: ActivationArchiveRow[],
+): Promise<{ buffer: Buffer; filename: string; rawDates: string[]; archiveRows: ActivationArchiveRow[] }> {
 
   // ── 1. Parse raw Perigee export ────────────────────────────────────────────
   const inputWb  = XLSX.read(fileBuffer, { type: 'buffer' });
@@ -162,6 +174,18 @@ export async function generateActivationReport(
 
   const rawDates  = rows.map(r => r.date).filter(d => d.includes('/'));
   const dateLabel = latestDateLabel(rawDates);
+
+  // Build archive rows for blob persistence
+  const archiveRows: ActivationArchiveRow[] = rows.map(r => ({
+    repName:   r.repName,
+    date:      r.date,
+    place:     r.place,
+    startDate: r.startDate,
+    endDate:   r.endDate,
+    type:      r.type,
+    imageIds:  r.imageIds,
+    channel:   r.channel,
+  }));
 
   // ── 3. Pre-fetch images from SharePoint ────────────────────────────────────
   const BASE_PATH       = (process.env.DFE_SP_BASE_PATH || 'DEFY/PERIGEE - FG/2. EXTERNAL SYNC/REPORTS').trim();
@@ -322,5 +346,5 @@ export async function generateActivationReport(
     .forEach((w, idx) => { ws.getColumn(idx + 1).width = w; });
 
   const buffer = Buffer.from(await wb.xlsx.writeBuffer());
-  return { buffer, filename, rawDates };
+  return { buffer, filename, rawDates, archiveRows };
 }

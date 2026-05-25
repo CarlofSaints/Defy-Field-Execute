@@ -80,6 +80,13 @@ const T_IMG  = 'http://schemas.openxmlformats.org/officeDocument/2006/relationsh
 const T_SLD  = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide';
 const SLD_CT = 'application/vnd.openxmlformats-officedocument.presentationml.slide+xml';
 
+export interface StandReportArchiveRow {
+  repName:  string;
+  store:    string;
+  date:     string;
+  imageIds: string[];
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function xmlEsc(s: string): string {
   return s
@@ -452,7 +459,8 @@ function buildContentTypes(tplCt: string, slideFiles: string[]): string {
 export async function generateStandReport(
   fileBuffer: Buffer,
   brand: string,
-): Promise<{ buffer: Buffer; filename: string; rawDates: string[] }> {
+  historicalRows?: StandReportArchiveRow[],
+): Promise<{ buffer: Buffer; filename: string; rawDates: string[]; archiveRows: StandReportArchiveRow[] }> {
 
   // ── 1. Parse Excel ─────────────────────────────────────────────────────────
   const wb = XLSX.read(fileBuffer, { type: 'buffer' });
@@ -481,6 +489,14 @@ export async function generateStandReport(
 
   const rawDates = rows.map(r => r.date).filter(d => d.includes('/'));
   const dateRange = getDateRange(rawDates);
+
+  // Build archive rows for blob persistence
+  const archiveRows: StandReportArchiveRow[] = rows.map(r => ({
+    repName:  r.repName,
+    store:    r.store,
+    date:     r.date,
+    imageIds: r.imageIds,
+  }));
 
   // ── 3. Build slide groups (max 2 images per slide per row) ─────────────────
   interface SlideGroup { store: string; repName: string; date: string; imageIds: string[] }
@@ -698,5 +714,5 @@ export async function generateStandReport(
     compressionOptions: { level: 9 },
   }));
 
-  return { buffer, filename, rawDates };
+  return { buffer, filename, rawDates, archiveRows };
 }

@@ -37,7 +37,7 @@ const DEFY_RED = 'E31837';
 const WHITE    = 'FFFFFF';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
-interface DatabaseRow {
+export interface DatabaseRow {
   week:          string;
   storeName:     string;
   storeCode:     string;
@@ -185,7 +185,8 @@ export async function generateMakroStockCount(
   brand: string,
   storeMap: StoreMapEntry[] = [],
   retailer = 'MAKRO',
-): Promise<{ buffer: Buffer; filename: string; rawDates: string[]; weekLabel: string }> {
+  historicalRows?: DatabaseRow[],
+): Promise<{ buffer: Buffer; filename: string; rawDates: string[]; weekLabel: string; archiveRows: DatabaseRow[] }> {
 
   // ── 0. Load critical lines from control file ────────────────────────────────
   const criticalLineCodes = getCriticalLineSet(brand, retailer);
@@ -362,7 +363,7 @@ export async function generateMakroStockCount(
 
   // ── 6. Build output Excel ─────────────────────────────────────────────────
   const buf = await buildOutputExcel(db, brand, retailer, weekLabel, reportYear);
-  return { buffer: buf, filename, rawDates: dates, weekLabel };
+  return { buffer: buf, filename, rawDates: dates, weekLabel, archiveRows: db };
 }
 
 // ─── Internal hyperlink helper ───────────────────────────────────────────────

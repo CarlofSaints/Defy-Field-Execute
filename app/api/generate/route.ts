@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { after } from 'next/server';
 import { randomUUID } from 'crypto';
-import { generateMakroStockCount, analyzeStockCount } from '@/lib/reports/makro-stock-count';
-import { generateRedFlag, extractRedFlagProblems } from '@/lib/reports/red-flag';
-import { generateStandReport } from '@/lib/reports/stand-report';
+import { generateMakroStockCount, analyzeStockCount, type DatabaseRow } from '@/lib/reports/makro-stock-count';
+import { generateRedFlag, extractRedFlagProblems, type RedFlagArchiveRow } from '@/lib/reports/red-flag';
+import { generateStandReport, type StandReportArchiveRow } from '@/lib/reports/stand-report';
 import { generateTrainingFeedback, type TrainingSummaryRow } from '@/lib/reports/training-feedback';
 import { loadMonthUploads, archiveUpload } from '@/lib/uploadArchive';
-import { generateActivationReport } from '@/lib/reports/activation-report';
-import { generateServiceCallReport } from '@/lib/reports/service-call-report';
+import { generateActivationReport, type ActivationArchiveRow } from '@/lib/reports/activation-report';
+import { generateServiceCallReport, type ServiceCallArchiveRow } from '@/lib/reports/service-call-report';
 import { analyzeChannelMismatch, filterByChannel } from '@/lib/reports/channel-check';
 import { loadStoreMap } from '@/lib/storeMapData';
 import { loadReports, DATA_FORMAT_LABELS } from '@/lib/reportData';
@@ -166,11 +166,16 @@ export async function POST(req: NextRequest) {
 
       case 'stock-count': {
         const retailer = channel || 'UNKNOWN';
-        const { buffer, rawDates, weekLabel } = await generateMakroStockCount(
-          fileBuffer, brand, storeMap, retailer,
+        const currentMonth = new Date().toISOString().slice(0, 7);
+        const historicalStockRows = await loadMonthUploads<DatabaseRow>('stock-count', brand, currentMonth);
+        const { buffer, rawDates, weekLabel, archiveRows: stockArchiveRows } = await generateMakroStockCount(
+          fileBuffer, brand, storeMap, retailer, historicalStockRows,
         );
         const filename = buildFilename(brand, dataFormat, channel, rawDates);
         results.push({ excelBuffer: buffer, filename, rawDates, weekLabel, retailer, label: '' });
+        await archiveUpload('stock-count', brand, currentMonth, stockArchiveRows).catch(e => {
+          console.error('[generate] Stock count archive failed:', e instanceof Error ? e.message : e);
+        });
         break;
       }
 
@@ -209,23 +214,34 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ error: validationErrors.join('\n') }, { status: 422 });
         }
 
+        const currentMonthRf = new Date().toISOString().slice(0, 7);
+        const historicalRfRows = await loadMonthUploads<RedFlagArchiveRow>('red-flag', brand, currentMonthRf);
+
         // Generate Sales report
         if (salesProblems.length) {
-          const { buffer, rawDates } = await generateRedFlag(fileBuffer, brand, 'SALES', salesProblems);
+          const { buffer, rawDates, archiveRows: salesArchiveRows } = await generateRedFlag(fileBuffer, brand, 'SALES', salesProblems, historicalRfRows);
           const filename = buildFilename(brand, dataFormat, channel, rawDates, 'SALES');
           results.push({ excelBuffer: buffer, filename, rawDates, weekLabel: '', retailer: '', label: 'SALES' });
+          await archiveUpload('red-flag', brand, currentMonthRf, salesArchiveRows).catch(e => {
+            console.error('[generate] Red flag SALES archive failed:', e instanceof Error ? e.message : e);
+          });
         }
         // Generate Marketing report
         if (marketingProblems.length) {
-          const { buffer, rawDates } = await generateRedFlag(fileBuffer, brand, 'MARKETING', marketingProblems);
+          const { buffer, rawDates, archiveRows: mktgArchiveRows } = await generateRedFlag(fileBuffer, brand, 'MARKETING', marketingProblems, historicalRfRows);
           const filename = buildFilename(brand, dataFormat, channel, rawDates, 'MARKETING');
           results.push({ excelBuffer: buffer, filename, rawDates, weekLabel: '', retailer: '', label: 'MARKETING' });
+          await archiveUpload('red-flag', brand, currentMonthRf, mktgArchiveRows).catch(e => {
+            console.error('[generate] Red flag MARKETING archive failed:', e instanceof Error ? e.message : e);
+          });
         }
         break;
       }
 
       case 'stand-report': {
-        const { buffer, rawDates } = await generateStandReport(fileBuffer, brand);
+        const currentMonthSr = new Date().toISOString().slice(0, 7);
+        const historicalSrRows = await loadMonthUploads<StandReportArchiveRow>('stand-report', brand, currentMonthSr);
+        const { buffer, rawDates, archiveRows: srArchiveRows } = await generateStandReport(fileBuffer, brand, historicalSrRows);
         const filename = buildFilename(brand, dataFormat, channel, rawDates);
         results.push({
           excelBuffer: buffer,
@@ -235,6 +251,9 @@ export async function POST(req: NextRequest) {
           retailer:  '',
           label:     '',
           contentType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        });
+        await archiveUpload('stand-report', brand, currentMonthSr, srArchiveRows).catch(e => {
+          console.error('[generate] Stand report archive failed:', e instanceof Error ? e.message : e);
         });
         break;
       }
@@ -260,16 +279,26 @@ export async function POST(req: NextRequest) {
       }
 
       case 'activation-report': {
-        const { buffer, rawDates } = await generateActivationReport(fileBuffer, brand);
+        const currentMonthAr = new Date().toISOString().slice(0, 7);
+        const historicalArRows = await loadMonthUploads<ActivationArchiveRow>('activation-report', brand, currentMonthAr);
+        const { buffer, rawDates, archiveRows: arArchiveRows } = await generateActivationReport(fileBuffer, brand, historicalArRows);
         const filename = buildFilename(brand, dataFormat, channel, rawDates);
         results.push({ excelBuffer: buffer, filename, rawDates, weekLabel: '', retailer: '', label: '' });
+        await archiveUpload('activation-report', brand, currentMonthAr, arArchiveRows).catch(e => {
+          console.error('[generate] Activation report archive failed:', e instanceof Error ? e.message : e);
+        });
         break;
       }
 
       case 'service-call': {
-        const { buffer, rawDates } = await generateServiceCallReport(fileBuffer, brand);
+        const currentMonthSc = new Date().toISOString().slice(0, 7);
+        const historicalScRows = await loadMonthUploads<ServiceCallArchiveRow>('service-call', brand, currentMonthSc);
+        const { buffer, rawDates, archiveRows: scArchiveRows } = await generateServiceCallReport(fileBuffer, brand, historicalScRows);
         const filename = buildFilename(brand, dataFormat, channel, rawDates);
         results.push({ excelBuffer: buffer, filename, rawDates, weekLabel: '', retailer: '', label: '' });
+        await archiveUpload('service-call', brand, currentMonthSc, scArchiveRows).catch(e => {
+          console.error('[generate] Service call archive failed:', e instanceof Error ? e.message : e);
+        });
         break;
       }
 
