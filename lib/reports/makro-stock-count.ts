@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import type { StoreMapEntry } from '@/lib/storeMapData';
 import { getCriticalLineSet } from '@/lib/criticalLinesData';
+import { buildProductLookup, type ProductLookup } from '@/lib/productCatalogData';
 import { buildMenuSheet, applyHeaderStyle, applyDataStyle, addNavRow } from './build-menu';
 
 // ─── Category mapping ───────────────────────────────────────────────────────
@@ -78,6 +79,29 @@ function extractProductCode(header: string): string {
   return words[0].toUpperCase();
 }
 
+// ─── New Perigee format detection ─────────────────────────────────────────────
+// The newer stock-count export uses repeating "Product Description" / "SOH"
+// column pairs instead of per-category SOH columns. It carries no category
+// headers, so CATEGORY / SUB CAT are looked up from the product catalog control
+// file by the code that prefixes each product description.
+function isNewFormat(headers: (string | null)[]): boolean {
+  return headers.some(h => h && h.trim().toLowerCase() === 'product description');
+}
+
+// Returns adjacent [Product Description, SOH] column-index pairs.
+function findProductPairs(headers: (string | null)[]): { descIdx: number; sohIdx: number }[] {
+  const pairs: { descIdx: number; sohIdx: number }[] = [];
+  for (let i = 0; i < headers.length; i++) {
+    const h = headers[i];
+    if (!h || !h.trim().toLowerCase().startsWith('product description')) continue;
+    const next = headers[i + 1];
+    if (next && next.trim().toUpperCase().startsWith('SOH')) {
+      pairs.push({ descIdx: i, sohIdx: i + 1 });
+    }
+  }
+  return pairs;
+}
+
 
 // ─── Province lookup helper ───────────────────────────────────────────────────
 function lookupProvince(storeCode: string, storeName: string, storeMap: StoreMapEntry[]): string {
@@ -103,7 +127,7 @@ function perigeeToDate(dateStr: string): Date {
 // ─── Pre-generate analysis ───────────────────────────────────────────────────
 // Parses only headers + row metadata — no Excel generation. Returns warnings
 // the user should acknowledge, or a hardError that blocks generation entirely.
-export function analyzeStockCount(fileBuffer: Buffer): { warnings: string[]; hardError: string | null } {
+export function analyzeStockCount(fileBuffer: Buffer, brand = 'DEFY'): { warnings: string[]; hardError: string | null } {
   const inputWb = XLSX.read(fileBuffer, { type: 'buffer' });
   const inputWs = inputWb.Sheets[inputWb.SheetNames[0]];
   const rawData = XLSX.utils.sheet_to_json(inputWs, { header: 1, defval: null }) as (string | number | null)[][];
@@ -126,6 +150,47 @@ export function analyzeStockCount(fileBuffer: Buffer): { warnings: string[]; har
       `${blankStoreCount === 1 ? 'this rep' : 'these reps'} did not complete their store check-in ` +
       `and will appear as "UNKNOWN" in the report.`
     );
+  }
+
+  // ── New format: "Product Description" / "SOH" pairs + catalog lookup ────────
+  if (isNewFormat(headers)) {
+    const pairs = findProductPairs(headers);
+    if (pairs.length === 0) {
+      return {
+        warnings: [],
+        hardError:
+          'This file uses the new format but no "Product Description" / "SOH" column pairs were found. ' +
+          'Check that you have uploaded the correct Perigee stock-count export.',
+      };
+    }
+
+    const lookup = buildProductLookup(brand);
+    if (lookup.size === 0) {
+      warnings.push(
+        `No product catalog is loaded for ${brand.toUpperCase()}. CATEGORY and SUB CAT will show ` +
+        `"UNKNOWN" for every product. Upload the Product Management control file under ` +
+        `Admin → Store Maintenance → Product Catalog, then regenerate.`
+      );
+    } else {
+      const unmatched = new Set<string>();
+      for (const row of rawRows) {
+        for (const p of pairs) {
+          const desc = String(row[p.descIdx] ?? '').trim();
+          if (!desc) continue;
+          if (!lookup.resolve(desc).matched) unmatched.add(desc);
+        }
+      }
+      if (unmatched.size > 0) {
+        const examples = [...unmatched].slice(0, 5).map(d => `• ${d}`).join('\n');
+        warnings.push(
+          `${unmatched.size} product${unmatched.size === 1 ? '' : 's'} could not be matched to the ` +
+          `${brand.toUpperCase()} product catalog and will show "UNKNOWN" category. ` +
+          `Check the product code prefix or update the catalog. Examples:\n${examples}`
+        );
+      }
+    }
+
+    return { warnings, hardError: null };
   }
 
   // 2. Find critical lines boundary and count SOH / on-floor / reason columns
@@ -217,133 +282,182 @@ export async function generateMakroStockCount(
   }
   const dataRows = [...storeLatest.values()].map(v => v.row);
 
-  // ── 2. Build category column map ──────────────────────────────────────────
-  // Find where each category section starts; stop at CRITICAL LINES
-  const categoryAtCol = new Map<number, { subCat: string; cat: string }>();
-  let criticalLinesStartCol = Infinity;
-
-  for (let i = 0; i < headers.length; i++) {
-    const h = headers[i];
-    if (!h) continue;
-    const hTrimmed = h.trim();
-    if (hTrimmed === 'CRITICAL LINES') {
-      criticalLinesStartCol = i;
-      break;
-    }
-    if (CATEGORY_MAP[hTrimmed]) {
-      categoryAtCol.set(i, CATEGORY_MAP[hTrimmed]);
-    }
-  }
-
-  // ── 3. Identify all SOH columns (before CRITICAL LINES section) ───────────
-  interface SohCol {
-    colIdx:       number;
-    header:       string;
-    productCode:  string;
-    subCat:       string;
-    cat:          string;
-    onFloorIdx:   number | null;
-    reasonIdx:    number | null;
-  }
-
-  const sohCols: SohCol[] = [];
-
-  for (let i = 0; i < headers.length && i < criticalLinesStartCol; i++) {
-    const h = headers[i];
-    if (!h || !h.toUpperCase().includes('SOH')) continue;
-
-    const productCode = extractProductCode(h);
-
-    // Determine category by finding the nearest category header to the left
-    let subCat = 'UNKNOWN';
-    let cat    = 'UNKNOWN';
-    let bestCol = -1;
-    for (const [catCol, catInfo] of categoryAtCol) {
-      if (catCol < i && catCol > bestCol) {
-        bestCol = catCol;
-        subCat  = catInfo.subCat;
-        cat     = catInfo.cat;
-      }
-    }
-
-    // Find "IS THE ... ON THE FLOOR?" column for this product
-    let onFloorIdx: number | null = null;
-    let reasonIdx:  number | null = null;
-    const pcUpper = productCode.toUpperCase();
-
-    for (let j = Math.max(0, i - 5); j < i; j++) {
-      const h2 = headers[j];
-      if (h2 && h2.toUpperCase().startsWith('IS THE') && h2.toUpperCase().includes(pcUpper)) {
-        onFloorIdx = j;
-      }
-    }
-    for (let j = i + 1; j < Math.min(headers.length, i + 5); j++) {
-      const h2 = headers[j];
-      if (h2 && h2.toUpperCase().startsWith('WHAT IS THE REASON') && h2.toUpperCase().includes(pcUpper)) {
-        reasonIdx = j;
-      }
-    }
-
-    sohCols.push({ colIdx: i, header: h, productCode, subCat, cat, onFloorIdx, reasonIdx });
-  }
-
-  if (sohCols.length === 0) {
-    throw new Error(
-      'No product SOH columns found in the uploaded file. ' +
-      'Expected column headers containing "SOH" (e.g. "DBO489E 50cm Built-In Oven SOH"). ' +
-      'Check that you have uploaded the correct Perigee raw export for this report.'
-    );
-  }
-
-  // ── 4. Build vertical database ────────────────────────────────────────────
+  // ── 2. Build vertical database (format-dependent) ──────────────────────────
   const db: DatabaseRow[] = [];
   const dates: string[] = [];
 
-  for (const row of dataRows) {
-    const repFirst = String(row[2] ?? '').trim();
-    const repLast  = String(row[3] ?? '').trim();
-    const repName  = [repFirst, repLast].filter(Boolean).join(' ') || 'UNKNOWN';
+  // Shared per-row metadata extractor (column positions are identical in both
+  // the old and new Perigee exports).
+  const rowMeta = (row: (string | number | null)[]) => {
+    const repFirst  = String(row[2] ?? '').trim();
+    const repLast   = String(row[3] ?? '').trim();
+    const repName   = [repFirst, repLast].filter(Boolean).join(' ') || 'UNKNOWN';
     const storeName = String(row[6] ?? '').trim() || 'UNKNOWN';
     const storeCode = String(row[7] ?? '').trim();
     const dateStr   = String(row[9] ?? '').trim();
-    // Province: look up from control file first; fall back to raw col 8 if present
     const rawProvince = String(row[8] ?? '').trim();
-    const province = lookupProvince(storeCode, storeName, storeMap) || rawProvince || 'UNKNOWN';
+    const province  = lookupProvince(storeCode, storeName, storeMap) || rawProvince || 'UNKNOWN';
+    let weekLabel = '';
+    if (dateStr && dateStr.includes('/')) weekLabel = `WEEK${String(getISOWeek(dateStr).week).padStart(2, '0')}`;
+    return { repName, storeName, storeCode, dateStr, province, weekLabel };
+  };
 
-    if (dateStr && dateStr.includes('/')) dates.push(dateStr);
+  if (isNewFormat(headers)) {
+    // ── NEW format: "Product Description" / "SOH" pairs + catalog lookup ──────
+    // The export carries no category headers, so CATEGORY / SUB CAT are resolved
+    // from the product catalog control file by the code prefixing each
+    // product description.
+    const lookup = buildProductLookup(brand);
+    const pairs  = findProductPairs(headers);
+    if (pairs.length === 0) {
+      throw new Error(
+        'No "Product Description" / "SOH" column pairs found in the uploaded file. ' +
+        'Check that you have uploaded the correct Perigee stock-count export.'
+      );
+    }
 
-    for (const col of sohCols) {
-      const raw = row[col.colIdx];
-      if (raw === null || raw === undefined || raw === '') continue;
-      const sohNum = Number(raw);
-      if (isNaN(sohNum)) continue;
+    for (const row of dataRows) {
+      const { repName, storeName, storeCode, dateStr, province, weekLabel } = rowMeta(row);
+      if (dateStr && dateStr.includes('/')) dates.push(dateStr);
 
-      const onFloor = col.onFloorIdx !== null ? String(row[col.onFloorIdx] ?? '').trim() : '';
-      const reason  = col.reasonIdx  !== null ? String(row[col.reasonIdx]  ?? '').trim() : '';
+      for (const p of pairs) {
+        const desc = String(row[p.descIdx] ?? '').trim();
+        if (!desc) continue;
+        const raw = row[p.sohIdx];
+        if (raw === null || raw === undefined || raw === '') continue;
+        const sohNum = Number(raw);
+        if (isNaN(sohNum)) continue;
 
-      let weekLabel = '';
-      if (dateStr && dateStr.includes('/')) {
-        const { week } = getISOWeek(dateStr);
-        weekLabel = `WEEK${String(week).padStart(2, '0')}`;
+        const res = lookup.resolve(desc);
+
+        db.push({
+          week:          weekLabel,
+          storeName,
+          storeCode,
+          repName,
+          date:          dateStr,
+          subCategory:   res.subCategory,
+          productCode:   res.productCode,
+          product:       desc,
+          soh:           sohNum,
+          onFloor:       '',
+          reason:        '',
+          province,
+          category:      res.category,
+          keyCat:        res.category,
+          criticalLines: criticalLineCodes.has(res.productCode.toUpperCase()) ? 'YES' : 'NO',
+        });
+      }
+    }
+  } else {
+    // ── OLD format: per-category SOH columns ─────────────────────────────────
+    // Find where each category section starts; stop at CRITICAL LINES
+    const categoryAtCol = new Map<number, { subCat: string; cat: string }>();
+    let criticalLinesStartCol = Infinity;
+
+    for (let i = 0; i < headers.length; i++) {
+      const h = headers[i];
+      if (!h) continue;
+      const hTrimmed = h.trim();
+      if (hTrimmed === 'CRITICAL LINES') {
+        criticalLinesStartCol = i;
+        break;
+      }
+      if (CATEGORY_MAP[hTrimmed]) {
+        categoryAtCol.set(i, CATEGORY_MAP[hTrimmed]);
+      }
+    }
+
+    interface SohCol {
+      colIdx:       number;
+      header:       string;
+      productCode:  string;
+      subCat:       string;
+      cat:          string;
+      onFloorIdx:   number | null;
+      reasonIdx:    number | null;
+    }
+
+    const sohCols: SohCol[] = [];
+
+    for (let i = 0; i < headers.length && i < criticalLinesStartCol; i++) {
+      const h = headers[i];
+      if (!h || !h.toUpperCase().includes('SOH')) continue;
+
+      const productCode = extractProductCode(h);
+
+      // Determine category by finding the nearest category header to the left
+      let subCat = 'UNKNOWN';
+      let cat    = 'UNKNOWN';
+      let bestCol = -1;
+      for (const [catCol, catInfo] of categoryAtCol) {
+        if (catCol < i && catCol > bestCol) {
+          bestCol = catCol;
+          subCat  = catInfo.subCat;
+          cat     = catInfo.cat;
+        }
       }
 
-      db.push({
-        week:          weekLabel,
-        storeName,
-        storeCode,
-        repName,
-        date:          dateStr,
-        subCategory:   col.subCat,
-        productCode:   col.productCode,
-        product:       col.header.replace(/\s+SOH\s*$/i, '').trim(),
-        soh:           sohNum,
-        onFloor,
-        reason,
-        province,
-        category:      col.cat,
-        keyCat:        col.cat,
-        criticalLines: criticalLineCodes.has(col.productCode) ? 'YES' : 'NO',
-      });
+      // Find "IS THE ... ON THE FLOOR?" column for this product
+      let onFloorIdx: number | null = null;
+      let reasonIdx:  number | null = null;
+      const pcUpper = productCode.toUpperCase();
+
+      for (let j = Math.max(0, i - 5); j < i; j++) {
+        const h2 = headers[j];
+        if (h2 && h2.toUpperCase().startsWith('IS THE') && h2.toUpperCase().includes(pcUpper)) {
+          onFloorIdx = j;
+        }
+      }
+      for (let j = i + 1; j < Math.min(headers.length, i + 5); j++) {
+        const h2 = headers[j];
+        if (h2 && h2.toUpperCase().startsWith('WHAT IS THE REASON') && h2.toUpperCase().includes(pcUpper)) {
+          reasonIdx = j;
+        }
+      }
+
+      sohCols.push({ colIdx: i, header: h, productCode, subCat, cat, onFloorIdx, reasonIdx });
+    }
+
+    if (sohCols.length === 0) {
+      throw new Error(
+        'No product SOH columns found in the uploaded file. ' +
+        'Expected column headers containing "SOH" (e.g. "DBO489E 50cm Built-In Oven SOH"). ' +
+        'Check that you have uploaded the correct Perigee raw export for this report.'
+      );
+    }
+
+    for (const row of dataRows) {
+      const { repName, storeName, storeCode, dateStr, province, weekLabel } = rowMeta(row);
+      if (dateStr && dateStr.includes('/')) dates.push(dateStr);
+
+      for (const col of sohCols) {
+        const raw = row[col.colIdx];
+        if (raw === null || raw === undefined || raw === '') continue;
+        const sohNum = Number(raw);
+        if (isNaN(sohNum)) continue;
+
+        const onFloor = col.onFloorIdx !== null ? String(row[col.onFloorIdx] ?? '').trim() : '';
+        const reason  = col.reasonIdx  !== null ? String(row[col.reasonIdx]  ?? '').trim() : '';
+
+        db.push({
+          week:          weekLabel,
+          storeName,
+          storeCode,
+          repName,
+          date:          dateStr,
+          subCategory:   col.subCat,
+          productCode:   col.productCode,
+          product:       col.header.replace(/\s+SOH\s*$/i, '').trim(),
+          soh:           sohNum,
+          onFloor,
+          reason,
+          province,
+          category:      col.cat,
+          keyCat:        col.cat,
+          criticalLines: criticalLineCodes.has(col.productCode) ? 'YES' : 'NO',
+        });
+      }
     }
   }
 

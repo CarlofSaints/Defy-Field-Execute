@@ -112,6 +112,11 @@ export default function AdminReportsPage() {
   const [critUploading,         setCritUploading]         = useState(false);
   const [critExpanded,          setCritExpanded]          = useState<string | null>(null);
 
+  // Product Catalog (category / sub-category lookup)
+  const [productCatalogs,       setProductCatalogs]       = useState<{ brand: string; count: number }[]>([]);
+  const [pcBrand,               setPcBrand]               = useState('DEFY');
+  const [pcUploading,           setPcUploading]           = useState(false);
+
   // App Settings — SP image path
   const [picturesPath,        setPicturesPath]        = useState('');
   const [picturesPathSaving,  setPicturesPathSaving]  = useState(false);
@@ -173,6 +178,11 @@ export default function AdminReportsPage() {
     if (res.ok) setCriticalConfigs(await res.json());
   }, []);
 
+  const loadProductCatalogs = useCallback(async () => {
+    const res = await fetch('/api/product-catalog');
+    if (res.ok) setProductCatalogs(await res.json());
+  }, []);
+
   const loadRunLogData = useCallback(async () => {
     setRunLogLoading(true);
     const res = await fetch('/api/run-log');
@@ -184,9 +194,10 @@ export default function AdminReportsPage() {
     loadReports();
     loadStoreMapCount();
     loadCriticalLines();
+    loadProductCatalogs();
     loadRunLogData();
     loadAppSettings();
-  }, [loadReports, loadStoreMapCount, loadCriticalLines, loadRunLogData, loadAppSettings]);
+  }, [loadReports, loadStoreMapCount, loadCriticalLines, loadProductCatalogs, loadRunLogData, loadAppSettings]);
 
   async function handleSavePicturesPath() {
     setPicturesPathSaving(true);
@@ -275,6 +286,41 @@ export default function AdminReportsPage() {
     if (res.ok) {
       notify(`${brand} / ${channel} critical lines removed`);
       loadCriticalLines();
+    } else {
+      notify('Failed to delete', 'error');
+    }
+  }
+
+  async function handleProductCatalogUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPcUploading(true);
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('brand', pcBrand);
+    const res = await fetch('/api/product-catalog', { method: 'POST', body: fd });
+    setPcUploading(false);
+    e.target.value = '';
+    if (res.ok) {
+      const { count } = await res.json();
+      notify(`${pcBrand} — ${count} product${count === 1 ? '' : 's'} loaded`);
+      loadProductCatalogs();
+    } else {
+      const { error } = await res.json().catch(() => ({ error: 'Upload failed' }));
+      notify(error || 'Upload failed', 'error');
+    }
+  }
+
+  async function handleProductCatalogDelete(brand: string) {
+    if (!confirm(`Remove the product catalog for ${brand}?`)) return;
+    const res = await fetch('/api/product-catalog', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ brand }),
+    });
+    if (res.ok) {
+      notify(`${brand} product catalog removed`);
+      loadProductCatalogs();
     } else {
       notify('Failed to delete', 'error');
     }
@@ -878,6 +924,93 @@ export default function AdminReportsPage() {
 
             {criticalConfigs.length === 0 && (
               <p className="text-sm text-gray-400">No critical lines configured yet. Upload a file to get started.</p>
+            )}
+          </div>
+        </div>
+
+        {/* Product Catalog (category / sub-category lookup) */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="border-l-4 border-[#E31837] px-6 py-4">
+            <h2 className="font-semibold text-gray-800">Product Catalog</h2>
+            <p className="text-sm text-gray-500 mt-0.5">
+              Upload the Product Management control file per brand. The newer Perigee stock-count
+              forms don&apos;t carry category data, so <strong>Stock Count</strong> reports look up
+              <strong> CATEGORY</strong> and <strong>SUB CAT</strong> from this file by the product
+              code that prefixes each product description.
+            </p>
+          </div>
+          <div className="px-6 pb-6 space-y-4">
+            <p className="text-xs text-gray-500">
+              Expected columns: <span className="font-mono bg-gray-100 px-1 rounded">CLIENT PRODUCT ID</span>
+              {' · '}<span className="font-mono bg-gray-100 px-1 rounded">PRODUCT CATEGORY</span>
+              {' · '}<span className="font-mono bg-gray-100 px-1 rounded">PRODUCT SUB CATEGORY</span>
+            </p>
+
+            <div className="flex items-end gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">Brand</label>
+                <select
+                  value={pcBrand}
+                  onChange={e => setPcBrand(e.target.value)}
+                  className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#E31837]/30 focus:border-[#E31837]"
+                >
+                  {ALL_BRANDS.map(b => (
+                    <option key={b} value={b.toUpperCase()}>{b}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className={`inline-block cursor-pointer px-5 py-2 rounded-lg text-sm font-semibold text-white transition-colors ${
+                  pcUploading ? 'bg-gray-400 cursor-not-allowed' : 'bg-[#E31837] hover:bg-[#c01430]'
+                }`}>
+                  {pcUploading ? 'Uploading…' : 'Upload File'}
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls"
+                    className="hidden"
+                    onChange={handleProductCatalogUpload}
+                    disabled={pcUploading}
+                  />
+                </label>
+              </div>
+            </div>
+
+            {productCatalogs.length > 0 && (
+              <div className="border border-gray-100 rounded-lg overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 border-b border-gray-100">
+                    <tr>
+                      <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Brand</th>
+                      <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Products</th>
+                      <th className="px-4 py-2.5" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {productCatalogs.map(cat => (
+                      <tr key={cat.brand} className="hover:bg-gray-50 transition-colors group">
+                        <td className="px-4 py-2.5">
+                          <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs font-medium">{cat.brand}</span>
+                        </td>
+                        <td className="px-4 py-2.5 text-gray-700">
+                          {cat.count.toLocaleString()} product{cat.count === 1 ? '' : 's'}
+                        </td>
+                        <td className="px-4 py-2.5 text-right">
+                          <button
+                            onClick={() => handleProductCatalogDelete(cat.brand)}
+                            className="text-xs text-red-600 hover:text-red-800 font-medium opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {productCatalogs.length === 0 && (
+              <p className="text-sm text-gray-400">No product catalog loaded yet. Upload a file to get started.</p>
             )}
           </div>
         </div>
