@@ -312,6 +312,7 @@ export default function DashboardPage() {
   const [error,             setError]             = useState<string | null>(null);
   const [success,           setSuccess]           = useState<string | null>(null);
   const [warnings,          setWarnings]          = useState<string[] | null>(null);
+  const [unmatchedProducts, setUnmatchedProducts] = useState<{ code: string; description: string }[]>([]);
   const [largeFileWarning,  setLargeFileWarning]  = useState(false);
 
   // Channel mismatch
@@ -388,7 +389,7 @@ export default function DashboardPage() {
   async function handleGenerate(confirmed = false, ignoreLargeFile = false, channelActionOverride?: 'exclude' | 'include') {
     setError(null);
     setSuccess(null);
-    if (!confirmed) setWarnings(null);
+    if (!confirmed) { setWarnings(null); setUnmatchedProducts([]); }
 
     if (!brands.length) { setError('Select at least one brand.'); return; }
     if (!report)        { setError('Select a report type.'); return; }
@@ -443,12 +444,14 @@ export default function DashboardPage() {
       // 200 with warnings — show confirmation card
       if (body.warnings?.length) {
         setWarnings(body.warnings as string[]);
+        setUnmatchedProducts((body.unmatchedProducts as { code: string; description: string }[]) ?? []);
         return;
       }
 
       const names: string[] = body.filenames ?? (body.filename ? [body.filename as string] : []);
       setSuccess(`${names.join(' + ')} saved to SharePoint${sendEmail ? ' and sent by email' : ''}.`);
       setWarnings(null);
+      setUnmatchedProducts([]);
       setChannelMismatch(null);
       setChannelAction(null);
     } catch (err) {
@@ -793,12 +796,42 @@ export default function DashboardPage() {
             </div>
             <ul className="space-y-1.5 pl-2">
               {warnings.map((w, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm text-amber-900">
+                <li key={i} className="flex items-start gap-2 text-sm text-amber-900 whitespace-pre-line">
                   <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
                   {w}
                 </li>
               ))}
             </ul>
+
+            {/* Products not found in the control file */}
+            {unmatchedProducts.length > 0 && (
+              <div className="border border-amber-300 rounded-lg overflow-hidden bg-white">
+                <div className="flex items-center justify-between px-3 py-2 bg-amber-100/70 border-b border-amber-300">
+                  <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">
+                    Products not in the catalog ({unmatchedProducts.length})
+                  </p>
+                </div>
+                <div className="max-h-56 overflow-y-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-amber-50 sticky top-0">
+                      <tr>
+                        <th className="text-left px-3 py-1.5 text-xs font-semibold text-amber-700 uppercase tracking-wide w-32">Code</th>
+                        <th className="text-left px-3 py-1.5 text-xs font-semibold text-amber-700 uppercase tracking-wide">Product Description</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-amber-100">
+                      {unmatchedProducts.map((p, i) => (
+                        <tr key={i} className="hover:bg-amber-50/50">
+                          <td className="px-3 py-1.5 font-mono text-gray-800 align-top">{p.code}</td>
+                          <td className="px-3 py-1.5 text-gray-700">{p.description}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
             <div className="flex gap-3 pt-1">
               <button
                 type="button"
@@ -810,7 +843,7 @@ export default function DashboardPage() {
               </button>
               <button
                 type="button"
-                onClick={() => setWarnings(null)}
+                onClick={() => { setWarnings(null); setUnmatchedProducts([]); }}
                 disabled={generating}
                 className="px-5 py-2 rounded-xl border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 text-sm font-semibold transition-all"
               >

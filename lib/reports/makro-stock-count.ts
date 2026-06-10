@@ -125,15 +125,30 @@ function perigeeToDate(dateStr: string): Date {
 }
 
 // ─── Pre-generate analysis ───────────────────────────────────────────────────
+// A product whose code prefix isn't found in the catalog control file.
+export interface UnmatchedProduct {
+  code:        string;  // the leading token of the description (as captured in Perigee)
+  description: string;  // the full product description
+}
+
+export interface StockCountAnalysis {
+  warnings:           string[];
+  hardError:          string | null;
+  unmatchedProducts:  UnmatchedProduct[];
+}
+
 // Parses only headers + row metadata — no Excel generation. Returns warnings
 // the user should acknowledge, or a hardError that blocks generation entirely.
-export function analyzeStockCount(fileBuffer: Buffer, brand = 'DEFY'): { warnings: string[]; hardError: string | null } {
+// `unmatchedProducts` lists products whose code isn't in the catalog (new format
+// only); the report can still be generated — they show as UNKNOWN category.
+export function analyzeStockCount(fileBuffer: Buffer, brand = 'DEFY'): StockCountAnalysis {
+  void brand; // catalog lookup is brand-agnostic; kept for call-site clarity
   const inputWb = XLSX.read(fileBuffer, { type: 'buffer' });
   const inputWs = inputWb.Sheets[inputWb.SheetNames[0]];
   const rawData = XLSX.utils.sheet_to_json(inputWs, { header: 1, defval: null }) as (string | number | null)[][];
 
   if (rawData.length < 2) {
-    return { warnings: [], hardError: 'No data rows found in the uploaded file.' };
+    return { warnings: [], hardError: 'No data rows found in the uploaded file.', unmatchedProducts: [] };
   }
 
   const headers  = rawData[0] as (string | null)[];
@@ -161,9 +176,11 @@ export function analyzeStockCount(fileBuffer: Buffer, brand = 'DEFY'): { warning
         hardError:
           'This file uses the new format but no "Product Description" / "SOH" column pairs were found. ' +
           'Check that you have uploaded the correct Perigee stock-count export.',
+        unmatchedProducts: [],
       };
     }
 
+    const unmatchedProducts: UnmatchedProduct[] = [];
     const lookup = buildProductLookup();
     if (lookup.size === 0) {
       warnings.push(
@@ -172,25 +189,29 @@ export function analyzeStockCount(fileBuffer: Buffer, brand = 'DEFY'): { warning
         `Admin → Store Maintenance → Product Catalog, then regenerate.`
       );
     } else {
-      const unmatched = new Set<string>();
+      // Collect every distinct product description whose code isn't in the catalog.
+      const seen = new Set<string>();
       for (const row of rawRows) {
         for (const p of pairs) {
           const desc = String(row[p.descIdx] ?? '').trim();
-          if (!desc) continue;
-          if (!lookup.resolve(desc).matched) unmatched.add(desc);
+          if (!desc || seen.has(desc)) continue;
+          seen.add(desc);
+          if (!lookup.resolve(desc).matched) {
+            unmatchedProducts.push({ code: desc.split(/\s+/)[0] || desc, description: desc });
+          }
         }
       }
-      if (unmatched.size > 0) {
-        const examples = [...unmatched].slice(0, 5).map(d => `• ${d}`).join('\n');
+      if (unmatchedProducts.length > 0) {
+        const n = unmatchedProducts.length;
         warnings.push(
-          `${unmatched.size} product${unmatched.size === 1 ? '' : 's'} could not be matched to the ` +
-          `product catalog and will show "UNKNOWN" category. ` +
-          `Check the product code prefix or update the catalog. Examples:\n${examples}`
+          `${n} product${n === 1 ? ' is' : 's are'} not in the product catalog and will show ` +
+          `"UNKNOWN" category. You can still generate the report. ` +
+          `See the full list below — add ${n === 1 ? 'it' : 'them'} to the catalog to fix the categories.`
         );
       }
     }
 
-    return { warnings, hardError: null };
+    return { warnings, hardError: null, unmatchedProducts };
   }
 
   // 2. Find critical lines boundary and count SOH / on-floor / reason columns
@@ -226,6 +247,7 @@ export function analyzeStockCount(fileBuffer: Buffer, brand = 'DEFY'): { warning
         'No product SOH columns found in the uploaded file. ' +
         'Expected column headers containing "SOH" (e.g. "DBO489E 50cm Built-In Oven SOH"). ' +
         'Check that you have uploaded the correct Perigee raw export for this report.',
+      unmatchedProducts: [],
     };
   }
 
@@ -241,7 +263,7 @@ export function analyzeStockCount(fileBuffer: Buffer, brand = 'DEFY'): { warning
     if (reasonCount  === 0) warnings.push('No "What is the reason?" questions found — the REASON column will be blank in all sheets.');
   }
 
-  return { warnings, hardError: null };
+  return { warnings, hardError: null, unmatchedProducts: [] };
 }
 
 // ─── Main export ─────────────────────────────────────────────────────────────
