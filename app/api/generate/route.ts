@@ -149,7 +149,7 @@ export async function POST(req: NextRequest) {
 
   // ── Pre-generate analysis (skipped if user already confirmed) ───────────────
   if (!confirmed && dataFormat === 'stock-count') {
-    const { warnings, hardError, unmatchedProducts } = analyzeStockCount(fileBuffer, brand);
+    const { warnings, hardError, unmatchedProducts } = await analyzeStockCount(fileBuffer);
     if (hardError) {
       return NextResponse.json({ error: hardError }, { status: 422 });
     }

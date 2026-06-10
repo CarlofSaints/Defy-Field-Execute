@@ -141,8 +141,7 @@ export interface StockCountAnalysis {
 // the user should acknowledge, or a hardError that blocks generation entirely.
 // `unmatchedProducts` lists products whose code isn't in the catalog (new format
 // only); the report can still be generated — they show as UNKNOWN category.
-export function analyzeStockCount(fileBuffer: Buffer, brand = 'DEFY'): StockCountAnalysis {
-  void brand; // catalog lookup is brand-agnostic; kept for call-site clarity
+export async function analyzeStockCount(fileBuffer: Buffer): Promise<StockCountAnalysis> {
   const inputWb = XLSX.read(fileBuffer, { type: 'buffer' });
   const inputWs = inputWb.Sheets[inputWb.SheetNames[0]];
   const rawData = XLSX.utils.sheet_to_json(inputWs, { header: 1, defval: null }) as (string | number | null)[][];
@@ -181,7 +180,7 @@ export function analyzeStockCount(fileBuffer: Buffer, brand = 'DEFY'): StockCoun
     }
 
     const unmatchedProducts: UnmatchedProduct[] = [];
-    const lookup = buildProductLookup();
+    const lookup = await buildProductLookup();
     if (lookup.size === 0) {
       warnings.push(
         `No product catalog is loaded. CATEGORY and SUB CAT will show "UNKNOWN" for every product. ` +
@@ -329,7 +328,7 @@ export async function generateMakroStockCount(
     // The export carries no category headers, so CATEGORY / SUB CAT are resolved
     // from the product catalog control file by the code prefixing each
     // product description.
-    const lookup = buildProductLookup();
+    const lookup = await buildProductLookup();
     const pairs  = findProductPairs(headers);
     if (pairs.length === 0) {
       throw new Error(

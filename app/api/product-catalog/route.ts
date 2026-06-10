@@ -1,16 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as XLSX from 'xlsx';
 import {
-  loadProductCatalogs,
-  saveProductCatalogs,
+  loadProductCatalog,
+  saveProductCatalog,
+  deleteProductCatalog,
   normalizeCode,
-  type ProductCatalog,
 } from '@/lib/productCatalogData';
 
 export async function GET() {
-  // Return summary only (brand + count) — the full map can be large.
-  const catalogs = loadProductCatalogs();
-  return NextResponse.json(catalogs.map(c => ({ brand: c.brand, count: c.count })));
+  const catalog = await loadProductCatalog();
+  return NextResponse.json({ count: catalog?.count ?? 0 });
 }
 
 export async function POST(req: NextRequest) {
@@ -21,11 +20,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid form data' }, { status: 400 });
   }
 
-  const file  = formData.get('file')  as File   | null;
-  const brand = formData.get('brand') as string | null;
-
-  if (!file)  return NextResponse.json({ error: 'No file provided' }, { status: 400 });
-  if (!brand) return NextResponse.json({ error: 'Brand is required' }, { status: 400 });
+  const file = formData.get('file') as File | null;
+  if (!file) return NextResponse.json({ error: 'No file provided' }, { status: 400 });
 
   const buffer = Buffer.from(await file.arrayBuffer());
   const wb = XLSX.read(buffer, { type: 'buffer' });
@@ -68,7 +64,7 @@ export async function POST(req: NextRequest) {
     const category    = catIdx >= 0 ? String(row[catIdx] ?? '').trim().toUpperCase() : '';
     const subCategory = subIdx >= 0 ? String(row[subIdx] ?? '').trim().toUpperCase() : '';
     if (!category && !subCategory) continue;
-    // First occurrence wins (control files are ordered with the canonical row first)
+    // First occurrence wins (control files list the canonical row first)
     if (!(normId in products)) products[normId] = `${category}|${subCategory}`;
   }
 
@@ -77,32 +73,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'No valid products found in file' }, { status: 400 });
   }
 
-  // Upsert by brand
-  const catalogs = loadProductCatalogs();
-  const b = brand.toUpperCase();
-  const idx = catalogs.findIndex(c => c.brand.toUpperCase() === b);
-  const newCatalog: ProductCatalog = { brand: b, count, products };
-  if (idx >= 0) catalogs[idx] = newCatalog;
-  else catalogs.push(newCatalog);
-
-  await saveProductCatalogs(catalogs);
-  return NextResponse.json({ count, brand: b });
+  await saveProductCatalog({ count, products });
+  return NextResponse.json({ count });
 }
 
-export async function DELETE(req: NextRequest) {
-  const { brand } = await req.json() as { brand?: string };
-  if (!brand) {
-    return NextResponse.json({ error: 'brand is required' }, { status: 400 });
-  }
-
-  const catalogs = loadProductCatalogs();
-  const b = brand.toUpperCase();
-  const filtered = catalogs.filter(c => c.brand.toUpperCase() !== b);
-
-  if (filtered.length === catalogs.length) {
-    return NextResponse.json({ error: 'Catalog not found' }, { status: 404 });
-  }
-
-  await saveProductCatalogs(filtered);
+export async function DELETE() {
+  await deleteProductCatalog();
   return NextResponse.json({ ok: true });
 }

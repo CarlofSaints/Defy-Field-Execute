@@ -3,15 +3,20 @@ import path from 'path';
 
 // ─── Product catalog (control file) ─────────────────────────────────────────
 // Maps a product CODE (e.g. "DDW242") to its CATEGORY + SUB CATEGORY.
-// The code is the CLIENT PRODUCT ID column of the DEFY Product Management file;
-// it also appears as the leading token of each product description in the
-// Perigee stock-count export. Used to enrich CATEGORY / SUB CAT on reports.
+// The code is the CLIENT PRODUCT ID column of the Product Management file; it
+// also appears as the leading token of each product description in the Perigee
+// stock-count export. Used to enrich CATEGORY / SUB CAT on reports.
 //
-// Stored compactly as a map  normalisedId -> "CATEGORY|SUBCATEGORY"  to keep the
-// Vercel env-var payload small (~33 KB for ~1100 products vs ~72 KB as an array).
+// One combined catalog covers every brand — the control file carries Defy,
+// Beko, Grundig, etc. in a single sheet and product codes are globally unique,
+// so there is no per-brand split.
+//
+// Persistence: Vercel Blob on the server (the same store the upload archive
+// uses), local JSON file in dev. The earlier env-var approach was dropped — it
+// silently failed without VERCEL_TOKEN and suffered the baked-at-deploy
+// stale-read bug, which is why the catalog "didn't persist".
 
 export interface ProductCatalog {
-  brand:    string;                  // e.g. "DEFY" or "BEKO"
   count:    number;                  // number of products in the map
   products: Record<string, string>;  // normalisedId -> "CATEGORY|SUBCATEGORY"
 }
@@ -28,58 +33,81 @@ export interface ProductLookup {
   resolve(description: string): ResolvedProduct;
 }
 
-const FILE       = path.join(process.cwd(), 'data', 'productCatalog.json');
-const VERCEL_KEY = 'DFE_PRODUCT_CATALOG_JSON';
-const PROJECT_ID = 'prj_FaBoeZxXminOA9W8gSwsrwuLTz2i';
-
-let _cache: ProductCatalog[] | null = null;
+const FILE     = path.join(process.cwd(), 'data', 'productCatalog.json');
+const BLOB_KEY = 'config/product-catalog.json';
+const useBlob  = !!process.env.BLOB_READ_WRITE_TOKEN;
 
 /** Uppercase + strip everything that isn't a letter or digit. */
 export function normalizeCode(s: string): string {
   return String(s ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
 
-export function loadProductCatalogs(): ProductCatalog[] {
-  if (_cache !== null) return _cache;
-
-  const env = process.env[VERCEL_KEY];
-  if (process.env.VERCEL && env) {
-    _cache = JSON.parse(env);
-    return _cache!;
+export async function loadProductCatalog(): Promise<ProductCatalog | null> {
+  if (useBlob) {
+    const { list } = await import('@vercel/blob');
+    const listing = await list({ prefix: BLOB_KEY });
+    const match = listing.blobs.find(b => b.pathname === BLOB_KEY) ?? listing.blobs[0];
+    if (!match) return null;
+    const res = await fetch(match.url, { cache: 'no-store' });
+    if (!res.ok) return null;
+    return await res.json() as ProductCatalog;
   }
 
   if (fs.existsSync(FILE)) {
-    _cache = JSON.parse(fs.readFileSync(FILE, 'utf-8'));
-    return _cache!;
+    const parsed = JSON.parse(fs.readFileSync(FILE, 'utf-8'));
+    // Tolerate the old array-of-per-brand-catalogs shape from earlier seeds.
+    if (Array.isArray(parsed)) {
+      const products: Record<string, string> = {};
+      for (const c of parsed) Object.assign(products, c.products ?? {});
+      return { count: Object.keys(products).length, products };
+    }
+    return parsed as ProductCatalog;
   }
 
-  if (env) {
-    _cache = JSON.parse(env);
-    return _cache!;
+  return null;
+}
+
+export async function saveProductCatalog(catalog: ProductCatalog): Promise<void> {
+  if (useBlob) {
+    const { put } = await import('@vercel/blob');
+    await put(BLOB_KEY, JSON.stringify(catalog), {
+      access:          'public',
+      contentType:     'application/json',
+      addRandomSuffix: false,
+    });
+    return;
   }
 
-  return [];
+  const dir = path.dirname(FILE);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(FILE, JSON.stringify(catalog, null, 2));
+}
+
+export async function deleteProductCatalog(): Promise<void> {
+  if (useBlob) {
+    const { list, del } = await import('@vercel/blob');
+    const listing = await list({ prefix: BLOB_KEY });
+    const match = listing.blobs.find(b => b.pathname === BLOB_KEY) ?? listing.blobs[0];
+    if (match) await del(match.url);
+    return;
+  }
+
+  if (fs.existsSync(FILE)) fs.rmSync(FILE);
 }
 
 /**
- * Build a category lookup. Every loaded catalog is merged into a single
- * keyspace because product codes are globally unique across brands and the
- * control file usually carries several brands (Defy, Beko, Grundig…) in one
- * sheet — so one upload covers every report brand.
- *
- * The returned `resolve()` matches a Perigee product description to its catalog
- * entry by finding the longest product code that prefixes the (normalised)
- * description — this tolerates codes that contain spaces in the form data
- * (e.g. "DDW 242" → "DDW242"). Falls back to a substring match (code at the end
- * of the description), then to the first token with an UNKNOWN category.
+ * Build a category lookup. The returned `resolve()` matches a Perigee product
+ * description to its catalog entry by finding the longest product code that
+ * prefixes the (normalised) description — this tolerates codes that contain
+ * spaces in the form data (e.g. "DDW 242" → "DDW242"). Falls back to a
+ * substring match (code at the end of the description), then to the first token
+ * with an UNKNOWN category if nothing matches.
  */
-export function buildProductLookup(): ProductLookup {
-  const all = loadProductCatalogs();
-  // Merge all catalogs; later catalogs override earlier ones on code clash.
-  const products: Record<string, string> = {};
-  for (const c of all) Object.assign(products, c.products);
+export async function buildProductLookup(): Promise<ProductLookup> {
+  const catalog  = await loadProductCatalog();
+  const products = catalog?.products ?? {};
   // Longest code first so the most specific match wins (e.g. DAC4470 before DAC447).
-  const keys = Object.keys(products).sort((a, b) => b.length - a.length);
+  const keys  = Object.keys(products).sort((a, b) => b.length - a.length);
   const cache = new Map<string, ResolvedProduct>();
 
   const make = (key: string): ResolvedProduct => {
@@ -124,48 +152,4 @@ export function buildProductLookup(): ProductLookup {
   };
 
   return { size: keys.length, resolve };
-}
-
-export async function saveProductCatalogs(catalogs: ProductCatalog[]) {
-  _cache = catalogs;
-
-  try {
-    const dir = path.dirname(FILE);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(FILE, JSON.stringify(catalogs, null, 2));
-    return;
-  } catch {
-    // Vercel read-only FS — fall through to env-var persistence
-  }
-
-  const token = process.env.VERCEL_TOKEN;
-  if (!token) return;
-
-  const listRes = await fetch(`https://api.vercel.com/v9/projects/${PROJECT_ID}/env`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!listRes.ok) return;
-
-  const { envs } = await listRes.json() as { envs: { id: string; key: string }[] };
-  const existing = envs.find(e => e.key === VERCEL_KEY);
-  const value    = JSON.stringify(catalogs);
-
-  if (!existing) {
-    await fetch(`https://api.vercel.com/v9/projects/${PROJECT_ID}/env`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        key: VERCEL_KEY,
-        value,
-        type: 'plain',
-        target: ['production', 'preview', 'development'],
-      }),
-    });
-  } else {
-    await fetch(`https://api.vercel.com/v9/projects/${PROJECT_ID}/env/${existing.id}`, {
-      method: 'PATCH',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ value }),
-    });
-  }
 }
