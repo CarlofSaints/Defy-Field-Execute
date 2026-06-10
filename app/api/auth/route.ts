@@ -8,7 +8,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing credentials' }, { status: 400 });
   }
 
-  const users = loadUsers();
+  const users = await loadUsers();
   const user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
   if (!user) {
     return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
 
   if (!user.firstLoginAt) {
     user.firstLoginAt = new Date().toISOString();
-    saveUsers(users);
+    await saveUsers(users);
   }
 
   return NextResponse.json({

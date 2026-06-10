@@ -11,7 +11,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   let email = bodyEmail as string | undefined;
 
   if (!name || !email) {
-    const user = loadUsers().find(u => u.id === id);
+    const user = (await loadUsers()).find(u => u.id === id);
     if (!user) return NextResponse.json({ error: 'Not found' }, { status: 404 });
     name = user.name;
     email = user.email;

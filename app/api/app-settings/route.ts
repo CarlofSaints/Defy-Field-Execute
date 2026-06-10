@@ -9,7 +9,7 @@ async function requireAdmin(): Promise<boolean> {
   if (!raw) return false;
   try {
     const session = JSON.parse(raw);
-    const users = loadUsers();
+    const users = await loadUsers();
     const user = users.find(u => u.email === session.email);
     return user?.isAdmin === true;
   } catch {

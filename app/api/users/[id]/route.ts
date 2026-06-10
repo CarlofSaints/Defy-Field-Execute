@@ -6,7 +6,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   try {
     const { id } = await params;
     const body = await req.json();
-    const users = loadUsers();
+    const users = await loadUsers();
     const idx = users.findIndex(u => u.id === id);
     if (idx === -1) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
@@ -32,7 +32,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const users = loadUsers();
+  const users = await loadUsers();
   const filtered = users.filter(u => u.id !== id);
   if (filtered.length === users.length) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });

@@ -403,7 +403,7 @@ export async function POST(req: NextRequest) {
         };
         await addRunEntry(entry);
 
-        const adminEmails = loadUsers()
+        const adminEmails = (await loadUsers())
           .filter(u => u.isAdmin)
           .map(u => u.email);
         if (adminEmails.length) {
@@ -435,7 +435,7 @@ export async function POST(req: NextRequest) {
       };
       await addRunEntry(entry);
 
-      const adminEmails = loadUsers()
+      const adminEmails = (await loadUsers())
         .filter(u => u.isAdmin)
         .map(u => u.email);
       if (adminEmails.length) {

@@ -5,7 +5,7 @@ import { loadUsers, saveUsers, User } from '@/lib/userData';
 
 // GET — list all users (admin only — caller must verify on client)
 export async function GET() {
-  const users = loadUsers().map(({ password: _p, ...u }) => u);
+  const users = (await loadUsers()).map(({ password: _p, ...u }) => u);
   return NextResponse.json(users);
 }
 
@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing fields' }, { status: 400 });
   }
 
-  const users = loadUsers();
+  const users = await loadUsers();
   if (users.find(u => u.email.toLowerCase() === email.toLowerCase())) {
     return NextResponse.json({ error: 'Email already exists' }, { status: 409 });
   }
