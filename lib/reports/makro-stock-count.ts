@@ -164,11 +164,11 @@ export function analyzeStockCount(fileBuffer: Buffer, brand = 'DEFY'): { warning
       };
     }
 
-    const lookup = buildProductLookup(brand);
+    const lookup = buildProductLookup();
     if (lookup.size === 0) {
       warnings.push(
-        `No product catalog is loaded for ${brand.toUpperCase()}. CATEGORY and SUB CAT will show ` +
-        `"UNKNOWN" for every product. Upload the Product Management control file under ` +
+        `No product catalog is loaded. CATEGORY and SUB CAT will show "UNKNOWN" for every product. ` +
+        `Upload the Product Management control file under ` +
         `Admin → Store Maintenance → Product Catalog, then regenerate.`
       );
     } else {
@@ -184,7 +184,7 @@ export function analyzeStockCount(fileBuffer: Buffer, brand = 'DEFY'): { warning
         const examples = [...unmatched].slice(0, 5).map(d => `• ${d}`).join('\n');
         warnings.push(
           `${unmatched.size} product${unmatched.size === 1 ? '' : 's'} could not be matched to the ` +
-          `${brand.toUpperCase()} product catalog and will show "UNKNOWN" category. ` +
+          `product catalog and will show "UNKNOWN" category. ` +
           `Check the product code prefix or update the catalog. Examples:\n${examples}`
         );
       }
@@ -307,7 +307,7 @@ export async function generateMakroStockCount(
     // The export carries no category headers, so CATEGORY / SUB CAT are resolved
     // from the product catalog control file by the code prefixing each
     // product description.
-    const lookup = buildProductLookup(brand);
+    const lookup = buildProductLookup();
     const pairs  = findProductPairs(headers);
     if (pairs.length === 0) {
       throw new Error(

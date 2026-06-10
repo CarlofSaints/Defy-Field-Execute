@@ -933,10 +933,12 @@ export default function AdminReportsPage() {
           <div className="border-l-4 border-[#E31837] px-6 py-4">
             <h2 className="font-semibold text-gray-800">Product Catalog</h2>
             <p className="text-sm text-gray-500 mt-0.5">
-              Upload the Product Management control file per brand. The newer Perigee stock-count
-              forms don&apos;t carry category data, so <strong>Stock Count</strong> reports look up
+              Upload the Product Management control file. The newer Perigee stock-count forms
+              don&apos;t carry category data, so <strong>Stock Count</strong> reports look up
               <strong> CATEGORY</strong> and <strong>SUB CAT</strong> from this file by the product
-              code that prefixes each product description.
+              code that prefixes each product description. If the file contains several brands
+              (e.g. Defy + Beko together), just upload it once — products are matched by code
+              across every brand, no matter which brand you pick below.
             </p>
           </div>
           <div className="px-6 pb-6 space-y-4">

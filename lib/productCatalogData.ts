@@ -62,17 +62,22 @@ export function loadProductCatalogs(): ProductCatalog[] {
 }
 
 /**
- * Build a category lookup for a brand. The returned `resolve()` matches a
- * Perigee product description to its catalog entry by finding the longest
- * product code that prefixes the (normalised) description — this tolerates
- * codes that contain spaces in the form data (e.g. "DDW 242" → "DDW242").
- * Falls back to a substring match (code at the end of the description), then
- * to the first token with an UNKNOWN category if nothing matches.
+ * Build a category lookup. Every loaded catalog is merged into a single
+ * keyspace because product codes are globally unique across brands and the
+ * control file usually carries several brands (Defy, Beko, Grundig…) in one
+ * sheet — so one upload covers every report brand.
+ *
+ * The returned `resolve()` matches a Perigee product description to its catalog
+ * entry by finding the longest product code that prefixes the (normalised)
+ * description — this tolerates codes that contain spaces in the form data
+ * (e.g. "DDW 242" → "DDW242"). Falls back to a substring match (code at the end
+ * of the description), then to the first token with an UNKNOWN category.
  */
-export function buildProductLookup(brand: string): ProductLookup {
+export function buildProductLookup(): ProductLookup {
   const all = loadProductCatalogs();
-  const cfg = all.find(c => c.brand.toUpperCase() === brand.toUpperCase());
-  const products = cfg?.products ?? {};
+  // Merge all catalogs; later catalogs override earlier ones on code clash.
+  const products: Record<string, string> = {};
+  for (const c of all) Object.assign(products, c.products);
   // Longest code first so the most specific match wins (e.g. DAC4470 before DAC447).
   const keys = Object.keys(products).sort((a, b) => b.length - a.length);
   const cache = new Map<string, ResolvedProduct>();
