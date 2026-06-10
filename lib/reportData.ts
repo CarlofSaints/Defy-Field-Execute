@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { blobEnabled } from './blobStore';
 
 export interface ReportDef {
   id: string;
@@ -32,7 +33,7 @@ export const DATA_FORMAT_LABELS: Record<string, string> = Object.fromEntries(
 const FILE       = path.join(process.cwd(), 'data', 'reports.json');
 const BLOB_KEY   = 'config/reports.json';
 const VERCEL_KEY = 'DFE_REPORTS_JSON';
-const useBlob    = !!process.env.BLOB_READ_WRITE_TOKEN;
+const useBlob    = blobEnabled;
 
 export async function loadReports(): Promise<ReportDef[]> {
   if (useBlob) {

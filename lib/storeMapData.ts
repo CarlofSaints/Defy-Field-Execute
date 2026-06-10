@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { blobEnabled } from './blobStore';
 
 // Store → province mapping. Persisted in Vercel Blob on the server (the same
 // store the upload archive and product catalog use), local JSON file in dev.
@@ -15,7 +16,7 @@ export interface StoreMapEntry {
 const FILE       = path.join(process.cwd(), 'data', 'storeMap.json');
 const BLOB_KEY   = 'config/store-map.json';
 const VERCEL_KEY = 'DFE_STORE_MAP_JSON';
-const useBlob    = !!process.env.BLOB_READ_WRITE_TOKEN;
+const useBlob    = blobEnabled;
 
 export async function loadStoreMap(): Promise<StoreMapEntry[]> {
   if (useBlob) {

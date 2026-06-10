@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { blobEnabled } from './blobStore';
 
 export interface AppSettings {
   /**
@@ -26,7 +27,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 const FILE       = path.join(process.cwd(), 'data', 'appSettings.json');
 const BLOB_KEY   = 'config/app-settings.json';
 const VERCEL_KEY = 'DFE_APP_SETTINGS_JSON';
-const useBlob    = !!process.env.BLOB_READ_WRITE_TOKEN;
+const useBlob    = blobEnabled;
 
 export async function loadAppSettings(): Promise<AppSettings> {
   if (useBlob) {

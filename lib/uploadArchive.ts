@@ -7,8 +7,9 @@
  * Locally (no token): archiving is a no-op and loadMonthUploads returns [].
  */
 import { randomUUID } from 'crypto';
+import { blobEnabled } from './blobStore';
 
-const useBlob = !!process.env.BLOB_READ_WRITE_TOKEN;
+const useBlob = blobEnabled;
 
 function blobKey(reportType: string, brand: string, month: string, uploadId: string): string {
   return `uploads/${reportType}/${brand.toLowerCase()}/${month}/${uploadId}.json`;

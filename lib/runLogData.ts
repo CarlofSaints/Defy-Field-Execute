@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { blobEnabled } from './blobStore';
 
 export interface RunLogEntry {
   id:               string;
@@ -25,7 +26,7 @@ const MAX_ENTRIES = 500;
 const FILE        = path.join(process.cwd(), 'data', 'runLog.json');
 const BLOB_KEY    = 'config/run-log.json';
 const VERCEL_KEY  = 'DFE_RUN_LOG_JSON';
-const useBlob     = !!process.env.BLOB_READ_WRITE_TOKEN;
+const useBlob     = blobEnabled;
 
 export async function loadRunLog(): Promise<RunLogEntry[]> {
   if (useBlob) {

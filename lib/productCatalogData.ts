@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { blobEnabled } from './blobStore';
 
 // ─── Product catalog (control file) ─────────────────────────────────────────
 // Maps a product CODE (e.g. "DDW242") to its CATEGORY + SUB CATEGORY.
@@ -35,7 +36,7 @@ export interface ProductLookup {
 
 const FILE     = path.join(process.cwd(), 'data', 'productCatalog.json');
 const BLOB_KEY = 'config/product-catalog.json';
-const useBlob  = !!process.env.BLOB_READ_WRITE_TOKEN;
+const useBlob  = blobEnabled;
 
 /** Uppercase + strip everything that isn't a letter or digit. */
 export function normalizeCode(s: string): string {

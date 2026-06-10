@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import { blobEnabled } from './blobStore';
 
 export interface User {
   id: string;
@@ -27,7 +28,7 @@ const FILE       = path.join(process.cwd(), 'data', 'users.json');
 const BLOB_KEY   = 'config/users.json.enc';
 const VERCEL_KEY = 'DFE_USERS_JSON';
 const PROJECT_ID = 'prj_FaBoeZxXminOA9W8gSwsrwuLTz2i';
-const useBlob    = !!process.env.BLOB_READ_WRITE_TOKEN;
+const useBlob    = blobEnabled;
 
 function getEncKey(): Buffer | null {
   const hex = process.env.DFE_USERS_ENC_KEY;

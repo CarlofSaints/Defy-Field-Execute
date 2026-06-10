@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { blobEnabled } from './blobStore';
 
 // Critical-line products per brand + channel. Persisted in Vercel Blob on the
 // server (the same store the upload archive and product catalog use), local
@@ -21,7 +22,7 @@ export interface CriticalLinesConfig {
 const FILE       = path.join(process.cwd(), 'data', 'criticalLines.json');
 const BLOB_KEY   = 'config/critical-lines.json';
 const VERCEL_KEY = 'DFE_CRITICAL_LINES_JSON';
-const useBlob    = !!process.env.BLOB_READ_WRITE_TOKEN;
+const useBlob    = blobEnabled;
 
 export async function loadCriticalLines(): Promise<CriticalLinesConfig[]> {
   if (useBlob) {
