@@ -112,7 +112,7 @@ export default function AdminReportsPage() {
   const [critUploading,         setCritUploading]         = useState(false);
   const [critExpanded,          setCritExpanded]          = useState<string | null>(null);
 
-  // Product Catalog (category / sub-category lookup)
+  // Product Management File (category / sub-category lookup)
   const [pcCount,               setPcCount]               = useState<number | null>(null);
   const [pcUploading,           setPcUploading]           = useState(false);
 
@@ -305,7 +305,7 @@ export default function AdminReportsPage() {
     if (res.ok) {
       const { count } = await res.json();
       setPcCount(count);
-      notify(`Product catalog updated — ${count} product${count === 1 ? '' : 's'} loaded`);
+      notify(`Product Management File updated — ${count} product${count === 1 ? '' : 's'} loaded`);
     } else {
       const { error } = await res.json().catch(() => ({ error: 'Upload failed' }));
       notify(error || 'Upload failed', 'error');
@@ -313,11 +313,11 @@ export default function AdminReportsPage() {
   }
 
   async function handleProductCatalogDelete() {
-    if (!confirm('Remove the product catalog?')) return;
+    if (!confirm('Remove the Product Management File?')) return;
     const res = await fetch('/api/product-catalog', { method: 'DELETE' });
     if (res.ok) {
       setPcCount(0);
-      notify('Product catalog removed');
+      notify('Product Management File removed');
     } else {
       notify('Failed to delete', 'error');
     }
@@ -774,7 +774,7 @@ export default function AdminReportsPage() {
               </p>
             )}
 
-            <div>
+            <div className="flex items-center gap-3">
               <label className={`inline-block cursor-pointer px-5 py-2 rounded-lg text-sm font-semibold text-white transition-colors ${
                 storeMapUploading
                   ? 'bg-gray-400 cursor-not-allowed'
@@ -789,6 +789,12 @@ export default function AdminReportsPage() {
                   disabled={storeMapUploading}
                 />
               </label>
+              <a
+                href="/api/store-map/template"
+                className="text-sm font-semibold text-[#E31837] hover:underline"
+              >
+                Download template
+              </a>
             </div>
           </div>
         </div>
@@ -925,10 +931,10 @@ export default function AdminReportsPage() {
           </div>
         </div>
 
-        {/* Product Catalog (category / sub-category lookup) */}
+        {/* Product Management File (category / sub-category lookup) */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
           <div className="border-l-4 border-[#E31837] px-6 py-4">
-            <h2 className="font-semibold text-gray-800">Product Catalog</h2>
+            <h2 className="font-semibold text-gray-800">Product Management File</h2>
             <p className="text-sm text-gray-500 mt-0.5">
               Upload the Product Management control file. The newer Perigee stock-count forms
               don&apos;t carry category data, so <strong>Stock Count</strong> reports look up
@@ -949,7 +955,7 @@ export default function AdminReportsPage() {
               <p className={`text-sm font-medium ${pcCount > 0 ? 'text-green-700' : 'text-gray-400'}`}>
                 {pcCount > 0
                   ? `✓ ${pcCount.toLocaleString()} product${pcCount === 1 ? '' : 's'} currently loaded`
-                  : 'No product catalog loaded yet'}
+                  : 'No Product Management File loaded yet'}
               </p>
             )}
 

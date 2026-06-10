@@ -3,7 +3,7 @@ import path from 'path';
 import { blobEnabled } from './blobStore';
 
 // Critical-line products per brand + channel. Persisted in Vercel Blob on the
-// server (the same store the upload archive and product catalog use), local
+// server (the same store the upload archive and Product Management File use), local
 // JSON file in dev. The earlier env-var store needed VERCEL_TOKEN and only
 // reflected changes after a redeploy (env vars are baked at deploy time), so
 // uploads didn't stick.

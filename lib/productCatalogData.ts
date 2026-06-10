@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { blobEnabled } from './blobStore';
 
-// ─── Product catalog (control file) ─────────────────────────────────────────
+// ─── Product Management File (control file) ──────────────────────────────────
 // Maps a product CODE (e.g. "DDW242") to its CATEGORY + SUB CATEGORY.
 // The code is the CLIENT PRODUCT ID column of the Product Management file; it
 // also appears as the leading token of each product description in the Perigee

@@ -82,8 +82,8 @@ function extractProductCode(header: string): string {
 // ─── New Perigee format detection ─────────────────────────────────────────────
 // The newer stock-count export uses repeating "Product Description" / "SOH"
 // column pairs instead of per-category SOH columns. It carries no category
-// headers, so CATEGORY / SUB CAT are looked up from the product catalog control
-// file by the code that prefixes each product description.
+// headers, so CATEGORY / SUB CAT are looked up from the Product Management File
+// by the code that prefixes each product description.
 function isNewFormat(headers: (string | null)[]): boolean {
   return headers.some(h => h && h.trim().toLowerCase() === 'product description');
 }
@@ -125,7 +125,7 @@ function perigeeToDate(dateStr: string): Date {
 }
 
 // ─── Pre-generate analysis ───────────────────────────────────────────────────
-// A product whose code prefix isn't found in the catalog control file.
+// A product whose code prefix isn't found in the Product Management File.
 export interface UnmatchedProduct {
   code:        string;  // the leading token of the description (as captured in Perigee)
   description: string;  // the full product description
@@ -139,7 +139,7 @@ export interface StockCountAnalysis {
 
 // Parses only headers + row metadata — no Excel generation. Returns warnings
 // the user should acknowledge, or a hardError that blocks generation entirely.
-// `unmatchedProducts` lists products whose code isn't in the catalog (new format
+// `unmatchedProducts` lists products whose code isn't in the Product Management File (new format
 // only); the report can still be generated — they show as UNKNOWN category.
 export async function analyzeStockCount(fileBuffer: Buffer): Promise<StockCountAnalysis> {
   const inputWb = XLSX.read(fileBuffer, { type: 'buffer' });
@@ -183,12 +183,12 @@ export async function analyzeStockCount(fileBuffer: Buffer): Promise<StockCountA
     const lookup = await buildProductLookup();
     if (lookup.size === 0) {
       warnings.push(
-        `No product catalog is loaded. CATEGORY and SUB CAT will show "UNKNOWN" for every product. ` +
-        `Upload the Product Management control file under ` +
-        `Admin → Store Maintenance → Product Catalog, then regenerate.`
+        `No Product Management File is loaded. CATEGORY and SUB CAT will show "UNKNOWN" for every product. ` +
+        `Upload the Product Management File under ` +
+        `Admin → Store Maintenance → Product Management File, then regenerate.`
       );
     } else {
-      // Collect every distinct product description whose code isn't in the catalog.
+      // Collect every distinct product description whose code isn't in the Product Management File.
       const seen = new Set<string>();
       for (const row of rawRows) {
         for (const p of pairs) {
@@ -203,9 +203,9 @@ export async function analyzeStockCount(fileBuffer: Buffer): Promise<StockCountA
       if (unmatchedProducts.length > 0) {
         const n = unmatchedProducts.length;
         warnings.push(
-          `${n} product${n === 1 ? ' is' : 's are'} not in the product catalog and will show ` +
+          `${n} product${n === 1 ? ' is' : 's are'} not in the Product Management File and will show ` +
           `"UNKNOWN" category. You can still generate the report. ` +
-          `See the full list below — add ${n === 1 ? 'it' : 'them'} to the catalog to fix the categories.`
+          `See the full list below — add ${n === 1 ? 'it' : 'them'} to the Product Management File to fix the categories.`
         );
       }
     }
@@ -326,7 +326,7 @@ export async function generateMakroStockCount(
   if (isNewFormat(headers)) {
     // ── NEW format: "Product Description" / "SOH" pairs + catalog lookup ──────
     // The export carries no category headers, so CATEGORY / SUB CAT are resolved
-    // from the product catalog control file by the code prefixing each
+    // from the Product Management File by the code prefixing each
     // product description.
     const lookup = await buildProductLookup();
     const pairs  = findProductPairs(headers);
