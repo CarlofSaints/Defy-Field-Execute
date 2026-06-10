@@ -232,7 +232,7 @@ export async function generateRedFlag(
   // ── 3. Pre-fetch images from SharePoint ────────────────────────────────────
   // Images saved by VBA as "{imageId}.jpg" in the PERIGEE IMAGE DOWNLOADS folder.
   const BASE_PATH      = (process.env.DFE_SP_BASE_PATH   || 'DEFY/PERIGEE - FG/2. EXTERNAL SYNC/REPORTS').trim();
-  const appSettings    = loadAppSettings();
+  const appSettings    = await loadAppSettings();
   const rawPicturesPath = (
     appSettings.picturesFolderPath ||
     process.env.DFE_PICTURES_SP_PATH ||

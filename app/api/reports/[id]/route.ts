@@ -4,7 +4,7 @@ import { loadReports, saveReports } from '@/lib/reportData';
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const updates = await req.json();
-  const reports = loadReports();
+  const reports = await loadReports();
   const idx = reports.findIndex(r => r.id === id);
   if (idx === -1) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
@@ -25,7 +25,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const reports = loadReports();
+  const reports = await loadReports();
   const idx = reports.findIndex(r => r.id === id);
   if (idx === -1) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 

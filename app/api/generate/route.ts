@@ -126,7 +126,7 @@ export async function POST(req: NextRequest) {
   const rawFilename = file.name;
   const storeMap    = await loadStoreMap();
 
-  const reports    = loadReports();
+  const reports    = await loadReports();
   const reportDef  = reports.find(r => r.id === reportId);
   const reportName = reportDef?.name ?? reportId.replace(/-/g, ' ').toUpperCase();
   const dataFormat = reportDef?.dataFormat ?? '';

@@ -18,84 +18,54 @@ export interface RunLogEntry {
   emailRecipients?: string[];
 }
 
+// Persisted in Vercel Blob on the server (the same store the upload archive and
+// control files use), local JSON file in dev. Existing history in the bundled
+// file or legacy env var is read until the first Blob save.
 const MAX_ENTRIES = 500;
 const FILE        = path.join(process.cwd(), 'data', 'runLog.json');
-let _cache: RunLogEntry[] | null = null;
+const BLOB_KEY    = 'config/run-log.json';
+const VERCEL_KEY  = 'DFE_RUN_LOG_JSON';
+const useBlob     = !!process.env.BLOB_READ_WRITE_TOKEN;
 
-export function loadRunLog(): RunLogEntry[] {
-  if (_cache !== null) return _cache;
-
-  const env = process.env.DFE_RUN_LOG_JSON;
-  if (process.env.VERCEL && env) {
-    _cache = JSON.parse(env);
-    return _cache!;
+export async function loadRunLog(): Promise<RunLogEntry[]> {
+  if (useBlob) {
+    const { list } = await import('@vercel/blob');
+    const listing = await list({ prefix: BLOB_KEY });
+    const match = listing.blobs.find(b => b.pathname === BLOB_KEY) ?? listing.blobs[0];
+    if (match) {
+      const res = await fetch(match.url, { cache: 'no-store' });
+      if (res.ok) return await res.json() as RunLogEntry[];
+    }
+    // No Blob yet — fall through to legacy sources.
   }
 
-  if (fs.existsSync(FILE)) {
-    _cache = JSON.parse(fs.readFileSync(FILE, 'utf-8'));
-    return _cache!;
-  }
-
-  if (env) {
-    _cache = JSON.parse(env);
-    return _cache!;
-  }
-
+  const env = process.env[VERCEL_KEY];
+  if (process.env.VERCEL && env) return JSON.parse(env);
+  if (fs.existsSync(FILE))       return JSON.parse(fs.readFileSync(FILE, 'utf-8'));
+  if (env)                       return JSON.parse(env);
   return [];
 }
 
 export async function addRunEntry(entry: RunLogEntry): Promise<void> {
-  const log = loadRunLog();
+  const log = await loadRunLog();
   // Newest first; trim to max
   log.unshift(entry);
   if (log.length > MAX_ENTRIES) log.splice(MAX_ENTRIES);
   await saveRunLog(log);
 }
 
-async function saveRunLog(log: RunLogEntry[]) {
-  _cache = log;
-
-  try {
-    const dir = path.dirname(FILE);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(FILE, JSON.stringify(log, null, 2));
-    return;
-  } catch {
-    // Vercel read-only FS — fall through
-  }
-
-  const token     = process.env.VERCEL_TOKEN;
-  const projectId = 'prj_FaBoeZxXminOA9W8gSwsrwuLTz2i';
-  if (token) await upsertVercelEnvVar(token, projectId, log);
-}
-
-async function upsertVercelEnvVar(token: string, projectId: string, log: RunLogEntry[]) {
-  const listRes = await fetch(`https://api.vercel.com/v9/projects/${projectId}/env`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!listRes.ok) return;
-
-  const { envs } = await listRes.json() as { envs: { id: string; key: string }[] };
-  const envRecord = envs.find(e => e.key === 'DFE_RUN_LOG_JSON');
-  const value     = JSON.stringify(log);
-
-  if (!envRecord) {
-    await fetch(`https://api.vercel.com/v9/projects/${projectId}/env`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        key: 'DFE_RUN_LOG_JSON',
-        value,
-        type: 'plain',
-        target: ['production', 'preview', 'development'],
-      }),
+async function saveRunLog(log: RunLogEntry[]): Promise<void> {
+  if (useBlob) {
+    const { put } = await import('@vercel/blob');
+    await put(BLOB_KEY, JSON.stringify(log), {
+      access:          'public',
+      contentType:     'application/json',
+      addRandomSuffix: false,
     });
     return;
   }
 
-  await fetch(`https://api.vercel.com/v9/projects/${projectId}/env/${envRecord.id}`, {
-    method: 'PATCH',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ value }),
-  });
+  const dir = path.dirname(FILE);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(FILE, JSON.stringify(log, null, 2));
 }

@@ -18,7 +18,7 @@ async function requireAdmin(): Promise<boolean> {
 }
 
 export async function GET() {
-  const settings = loadAppSettings();
+  const settings = await loadAppSettings();
   return NextResponse.json(settings);
 }
 
@@ -34,7 +34,7 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
-  const current  = loadAppSettings();
+  const current  = await loadAppSettings();
   const updated: AppSettings = {
     ...current,
     ...(typeof body.picturesFolderPath === 'string'

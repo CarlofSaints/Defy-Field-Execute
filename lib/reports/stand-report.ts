@@ -517,7 +517,7 @@ export async function generateStandReport(
 
   // ── 4. Fetch images from SharePoint ────────────────────────────────────────
   const BASE_PATH = (process.env.DFE_SP_BASE_PATH || 'DEFY/PERIGEE - FG/2. EXTERNAL SYNC/REPORTS').trim();
-  const appSettings = loadAppSettings();
+  const appSettings = await loadAppSettings();
   const rawPicturesPath = (
     appSettings.picturesFolderPath ||
     process.env.DFE_PICTURES_SP_PATH ||
