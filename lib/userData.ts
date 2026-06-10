@@ -71,27 +71,35 @@ function loadLegacy(): User[] {
 export async function loadUsers(): Promise<User[]> {
   const key = getEncKey();
   if (useBlob && key) {
-    const { list } = await import('@vercel/blob');
-    const listing = await list({ prefix: BLOB_KEY });
-    const match = listing.blobs.find(b => b.pathname === BLOB_KEY) ?? listing.blobs[0];
-    if (match) {
-      const res = await fetch(match.url, { cache: 'no-store' });
-      if (res.ok) {
-        try {
-          return JSON.parse(decrypt(await res.text(), key)) as User[];
-        } catch (err) {
-          console.error('[userData] failed to decrypt users blob:', err);
-          // Fall through to legacy seed rather than locking everyone out
+    // Any failure here (list/fetch error, bad decrypt, or an unexpectedly empty
+    // result) must NOT lock anyone out — fall back to the legacy env-var list.
+    try {
+      const { list } = await import('@vercel/blob');
+      const listing = await list({ prefix: BLOB_KEY });
+      const match = listing.blobs.find(b => b.pathname === BLOB_KEY) ?? listing.blobs[0];
+      if (match) {
+        const res = await fetch(match.url, { cache: 'no-store' });
+        if (res.ok) {
+          const users = JSON.parse(decrypt(await res.text(), key)) as User[];
+          if (Array.isArray(users) && users.length > 0) return users;
         }
       }
+    } catch (err) {
+      console.error('[userData] blob read failed, falling back to legacy:', err);
     }
-    // No encrypted blob yet — seed from the legacy source.
   }
   return loadLegacy();
 }
 
 export async function saveUsers(users: User[]): Promise<void> {
   const key = getEncKey();
+
+  // Safety guard: never overwrite the stored list with an empty one — that would
+  // lock everyone out. An empty save is treated as a no-op.
+  if (users.length === 0) {
+    console.error('[userData] refusing to save an empty user list');
+    return;
+  }
 
   // Preferred path: encrypted Blob (only when both Blob and a key are available)
   if (useBlob && key) {
