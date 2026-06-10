@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx';
 import { loadStoreMap, saveStoreMap, StoreMapEntry } from '@/lib/storeMapData';
 
 export async function GET() {
-  const map = loadStoreMap();
+  const map = await loadStoreMap();
   return NextResponse.json({ count: map.length, entries: map });
 }
 

@@ -124,7 +124,7 @@ export async function POST(req: NextRequest) {
 
   let fileBuffer  = Buffer.from(await file.arrayBuffer());
   const rawFilename = file.name;
-  const storeMap    = loadStoreMap();
+  const storeMap    = await loadStoreMap();
 
   const reports    = loadReports();
   const reportDef  = reports.find(r => r.id === reportId);

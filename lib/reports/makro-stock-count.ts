@@ -275,7 +275,7 @@ export async function generateMakroStockCount(
 ): Promise<{ buffer: Buffer; filename: string; rawDates: string[]; weekLabel: string; archiveRows: DatabaseRow[] }> {
 
   // ── 0. Load critical lines from control file ────────────────────────────────
-  const criticalLineCodes = getCriticalLineSet(brand, retailer);
+  const criticalLineCodes = await getCriticalLineSet(brand, retailer);
 
   // ── 1. Parse raw Perigee Excel ─────────────────────────────────────────────
   const inputWb = XLSX.read(fileBuffer, { type: 'buffer' });

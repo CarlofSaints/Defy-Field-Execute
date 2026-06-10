@@ -8,7 +8,7 @@ import {
 } from '@/lib/criticalLinesData';
 
 export async function GET() {
-  const configs = loadCriticalLines();
+  const configs = await loadCriticalLines();
   return NextResponse.json(configs);
 }
 
@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Upsert: replace existing config for same brand+channel, or add new
-  const configs = loadCriticalLines();
+  const configs = await loadCriticalLines();
   const b = brand.toUpperCase();
   const c = channel.toUpperCase();
   const idx = configs.findIndex(
@@ -90,7 +90,7 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: 'brand and channel are required' }, { status: 400 });
   }
 
-  const configs = loadCriticalLines();
+  const configs = await loadCriticalLines();
   const b = brand.toUpperCase();
   const c = channel.toUpperCase();
   const filtered = configs.filter(
