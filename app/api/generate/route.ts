@@ -11,8 +11,8 @@ import { generateServiceCallReport, type ServiceCallArchiveRow } from '@/lib/rep
 import { analyzeChannelMismatch, filterByChannel } from '@/lib/reports/channel-check';
 import { loadStoreMap } from '@/lib/storeMapData';
 import { loadReports, DATA_FORMAT_LABELS } from '@/lib/reportData';
-import { loadUsers } from '@/lib/userData';
 import { addRunEntry } from '@/lib/runLogData';
+import { loadUsers } from '@/lib/userData';
 import { sendRunNotification, sendReportEmail } from '@/lib/email';
 import { buildDfeFolderPath, uploadToSharePoint } from '@/lib/sharepoint-dfe';
 import type { DfeBrand } from '@/lib/sharepoint-dfe';
@@ -403,11 +403,11 @@ export async function POST(req: NextRequest) {
         };
         await addRunEntry(entry);
 
-        const adminEmails = (await loadUsers())
-          .filter(u => u.isAdmin)
+        const recipients = (await loadUsers())
+          .filter(u => u.notifyRunSuccess)
           .map(u => u.email);
-        if (adminEmails.length) {
-          await sendRunNotification(adminEmails, entry).catch(() => { /* non-fatal */ });
+        if (recipients.length) {
+          await sendRunNotification(recipients, entry).catch(() => { /* non-fatal */ });
         }
       }
     });
@@ -435,11 +435,11 @@ export async function POST(req: NextRequest) {
       };
       await addRunEntry(entry);
 
-      const adminEmails = (await loadUsers())
-        .filter(u => u.isAdmin)
+      const recipients = (await loadUsers())
+        .filter(u => u.notifyRunError)
         .map(u => u.email);
-      if (adminEmails.length) {
-        await sendRunNotification(adminEmails, entry).catch(() => { /* non-fatal */ });
+      if (recipients.length) {
+        await sendRunNotification(recipients, entry).catch(() => { /* non-fatal */ });
       }
     });
 

@@ -11,7 +11,7 @@ export async function GET() {
 
 // POST — create user
 export async function POST(req: NextRequest) {
-  const { name, email, password, isAdmin, forcePasswordChange } = await req.json();
+  const { name, email, password, isAdmin, forcePasswordChange, notifyRunSuccess, notifyRunError } = await req.json();
   if (!name || !email || !password) {
     return NextResponse.json({ error: 'Missing fields' }, { status: 400 });
   }
@@ -31,6 +31,8 @@ export async function POST(req: NextRequest) {
     forcePasswordChange: forcePasswordChange !== false,
     firstLoginAt: null,
     createdAt: new Date().toISOString(),
+    notifyRunSuccess: !!notifyRunSuccess,
+    notifyRunError: !!notifyRunError,
   };
   users.push(user);
   await saveUsers(users);

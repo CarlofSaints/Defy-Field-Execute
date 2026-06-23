@@ -12,6 +12,8 @@ interface User {
   forcePasswordChange: boolean;
   firstLoginAt: string | null;
   createdAt: string;
+  notifyRunSuccess?: boolean;
+  notifyRunError?: boolean;
 }
 
 type Toast = { message: string; type: 'success' | 'error' };
@@ -42,6 +44,8 @@ export default function AdminUsersPage() {
   const [addForcePwChange, setAddForcePwChange] = useState(true);
   const [showAddPw, setShowAddPw] = useState(false);
   const [sendWelcome, setSendWelcome] = useState(true);
+  const [addNotifySuccess, setAddNotifySuccess] = useState(false);
+  const [addNotifyError, setAddNotifyError] = useState(false);
   const [addLoading, setAddLoading] = useState(false);
 
   // Edit modal
@@ -49,6 +53,8 @@ export default function AdminUsersPage() {
   const [editName, setEditName] = useState('');
   const [editEmail, setEditEmail] = useState('');
   const [editAdmin, setEditAdmin] = useState(false);
+  const [editNotifySuccess, setEditNotifySuccess] = useState(false);
+  const [editNotifyError, setEditNotifyError] = useState(false);
   const [editPw, setEditPw] = useState('');
   const [showEditPw, setShowEditPw] = useState(false);
   const [sendReset, setSendReset] = useState(false);
@@ -71,7 +77,7 @@ export default function AdminUsersPage() {
       const res = await fetch('/api/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: addName, email: addEmail, password: addPw, isAdmin: addAdmin, forcePasswordChange: addForcePwChange }),
+        body: JSON.stringify({ name: addName, email: addEmail, password: addPw, isAdmin: addAdmin, forcePasswordChange: addForcePwChange, notifyRunSuccess: addNotifySuccess, notifyRunError: addNotifyError }),
       });
       const data = await res.json();
       if (!res.ok) { notify(data.error || 'Failed to create user', 'error'); return; }
@@ -84,7 +90,7 @@ export default function AdminUsersPage() {
         });
       }
       notify(`User ${addName} created${sendWelcome ? ' — welcome email sent' : ''}`);
-      setAddName(''); setAddEmail(''); setAddPw(''); setAddAdmin(false); setAddForcePwChange(true); setSendWelcome(true);
+      setAddName(''); setAddEmail(''); setAddPw(''); setAddAdmin(false); setAddForcePwChange(true); setSendWelcome(true); setAddNotifySuccess(false); setAddNotifyError(false);
       loadUsers();
     } finally {
       setAddLoading(false);
@@ -96,6 +102,8 @@ export default function AdminUsersPage() {
     setEditName(user.name);
     setEditEmail(user.email);
     setEditAdmin(user.isAdmin);
+    setEditNotifySuccess(!!user.notifyRunSuccess);
+    setEditNotifyError(!!user.notifyRunError);
     setEditPw('');
     setShowEditPw(false);
     setSendReset(false);
@@ -106,7 +114,7 @@ export default function AdminUsersPage() {
     if (!editUser) return;
     setEditLoading(true);
     try {
-      const body: Record<string, unknown> = { name: editName, email: editEmail, isAdmin: editAdmin };
+      const body: Record<string, unknown> = { name: editName, email: editEmail, isAdmin: editAdmin, notifyRunSuccess: editNotifySuccess, notifyRunError: editNotifyError };
       if (editPw) body.password = editPw;
 
       const res = await fetch(`/api/users/${editUser.id}`, {
@@ -191,6 +199,19 @@ export default function AdminUsersPage() {
                   className="accent-[#E31837]" />
                 Send welcome email
               </label>
+              <div className="pt-1 border-t border-gray-100 mt-1">
+                <p className="text-[11px] uppercase tracking-wide text-gray-400 font-semibold mb-1.5 mt-2">Report-run notifications</p>
+                <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                  <input type="checkbox" checked={addNotifySuccess} onChange={e => setAddNotifySuccess(e.target.checked)}
+                    className="accent-[#E31837]" />
+                  Email on successful runs
+                </label>
+                <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer mt-2">
+                  <input type="checkbox" checked={addNotifyError} onChange={e => setAddNotifyError(e.target.checked)}
+                    className="accent-[#E31837]" />
+                  Email on failed runs
+                </label>
+              </div>
             </div>
             <div className="sm:col-span-2">
               <button type="submit" disabled={addLoading}
@@ -211,6 +232,7 @@ export default function AdminUsersPage() {
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Name</th>
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Email</th>
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Role</th>
+                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Notifications</th>
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">First Login</th>
                   <th className="px-6 py-3" />
                 </tr>
@@ -224,6 +246,19 @@ export default function AdminUsersPage() {
                       <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${u.isAdmin ? 'bg-red-100 text-[#E31837]' : 'bg-gray-100 text-gray-600'}`}>
                         {u.isAdmin ? 'Admin' : 'User'}
                       </span>
+                    </td>
+                    <td className="px-6 py-3">
+                      <div className="flex flex-wrap gap-1">
+                        {u.notifyRunSuccess && (
+                          <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700">Success</span>
+                        )}
+                        {u.notifyRunError && (
+                          <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-red-100 text-red-700">Errors</span>
+                        )}
+                        {!u.notifyRunSuccess && !u.notifyRunError && (
+                          <span className="text-[11px] text-gray-400">—</span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-3 text-gray-500 text-xs">
                       {u.firstLoginAt ? new Date(u.firstLoginAt).toLocaleDateString() : 'Never'}
@@ -277,6 +312,17 @@ export default function AdminUsersPage() {
                   <input type="checkbox" checked={editAdmin} onChange={e => setEditAdmin(e.target.checked)} className="accent-[#E31837]" />
                   Admin user
                 </label>
+                <div className="pt-2 mt-1 border-t border-gray-100">
+                  <p className="text-[11px] uppercase tracking-wide text-gray-400 font-semibold mb-1.5 mt-1">Report-run notifications</p>
+                  <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                    <input type="checkbox" checked={editNotifySuccess} onChange={e => setEditNotifySuccess(e.target.checked)} className="accent-[#E31837]" />
+                    Email on successful runs
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer mt-2">
+                    <input type="checkbox" checked={editNotifyError} onChange={e => setEditNotifyError(e.target.checked)} className="accent-[#E31837]" />
+                    Email on failed runs
+                  </label>
+                </div>
                 {editPw && (
                   <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
                     <input type="checkbox" checked={sendReset} onChange={e => setSendReset(e.target.checked)} className="accent-[#E31837]" />

@@ -13,6 +13,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (body.name !== undefined) users[idx].name = body.name;
     if (body.email !== undefined) users[idx].email = body.email;
     if (body.isAdmin !== undefined) users[idx].isAdmin = body.isAdmin;
+    if (body.notifyRunSuccess !== undefined) users[idx].notifyRunSuccess = body.notifyRunSuccess;
+    if (body.notifyRunError !== undefined) users[idx].notifyRunError = body.notifyRunError;
     if (body.password) {
       users[idx].password = await bcrypt.hash(body.password, 10);
       // If the caller explicitly passes forcePasswordChange: false (e.g. the

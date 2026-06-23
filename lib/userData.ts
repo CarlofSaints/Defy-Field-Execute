@@ -10,6 +10,10 @@ export interface User {
   forcePasswordChange: boolean;
   firstLoginAt: string | null;
   createdAt: string;
+  // Per-user notification preferences. Replaces the old hardcoded
+  // "email every admin on every run" behaviour. Both default to off.
+  notifyRunSuccess?: boolean;  // email this user when a report generates OK
+  notifyRunError?: boolean;    // email this user when a report run fails
 }
 
 // Users are read from the DFE_USERS_JSON env var on Vercel (the value is the
