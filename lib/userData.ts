@@ -65,31 +65,59 @@ export async function saveUsers(users: User[]): Promise<void> {
     return;
   }
 
+  // On Vercel the DFE_USERS_JSON env var is the source of truth that loadUsers
+  // reads. The deployment filesystem is per-container and ephemeral: a
+  // writeFileSync here can *succeed* against a throwaway disk that loadUsers
+  // never reads, in which case the old code returned early and the env var was
+  // never updated — so newly created users and password changes silently
+  // vanished. On Vercel we must go straight to the env-var API.
+  if (process.env.VERCEL) {
+    await saveUsersToEnv(users);
+    return;
+  }
+
   // Local dev: write the file.
   try {
     const dir = path.dirname(FILE);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(FILE, JSON.stringify(users, null, 2));
-    return;
-  } catch {
-    // Vercel read-only FS — fall through to the env-var API.
+  } catch (err) {
+    console.error('[userData] local file save failed:', err);
   }
+}
 
+// Persist the user list to the DFE_USERS_JSON project env var via the Vercel
+// API. NOTE: env-var changes only take effect on the *next* deployment — the
+// running functions keep the value baked in at deploy time. A create/reset done
+// through the app therefore needs a redeploy before it goes live.
+async function saveUsersToEnv(users: User[]): Promise<void> {
   const token = process.env.VERCEL_TOKEN;
-  if (!token) return;
+  if (!token) {
+    console.error('[userData] VERCEL_TOKEN missing — cannot persist users');
+    return;
+  }
   try {
     const listRes = await fetch(`https://api.vercel.com/v9/projects/${PROJECT_ID}/env`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (!listRes.ok) return;
+    if (!listRes.ok) {
+      console.error('[userData] env list failed:', listRes.status);
+      return;
+    }
     const { envs } = await listRes.json() as { envs: { id: string; key: string }[] };
     const envRecord = envs.find(e => e.key === VERCEL_KEY);
-    if (!envRecord) return;
-    await fetch(`https://api.vercel.com/v9/projects/${PROJECT_ID}/env/${envRecord.id}`, {
+    if (!envRecord) {
+      console.error('[userData] DFE_USERS_JSON env record not found');
+      return;
+    }
+    const patchRes = await fetch(`https://api.vercel.com/v9/projects/${PROJECT_ID}/env/${envRecord.id}`, {
       method: 'PATCH',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ value: JSON.stringify(users) }),
     });
+    if (!patchRes.ok) {
+      console.error('[userData] env patch failed:', patchRes.status);
+    }
   } catch (err) {
     console.error('[userData] env-var save failed:', err);
   }
