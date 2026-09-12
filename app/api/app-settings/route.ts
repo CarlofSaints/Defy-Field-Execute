@@ -1,21 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { loadAppSettings, saveAppSettings, AppSettings } from '@/lib/appSettings';
-import { cookies } from 'next/headers';
-import { loadUsers } from '@/lib/userData';
+import { requireAdmin } from '@/lib/apiAuth';
 
-async function requireAdmin(): Promise<boolean> {
-  const cookieStore = await cookies();
-  const raw = cookieStore.get('dfe_session')?.value;
-  if (!raw) return false;
-  try {
-    const session = JSON.parse(raw);
-    const users = await loadUsers();
-    const user = users.find(u => u.email === session.email);
-    return user?.isAdmin === true;
-  } catch {
-    return false;
-  }
-}
+// The helper that used to live here read a `dfe_session` cookie that nothing
+// ever set — the session was in localStorage — so it always returned false and
+// this PATCH was a permanent 403. It now uses the shared guard in lib/apiAuth.
 
 export async function GET() {
   const settings = await loadAppSettings();
@@ -23,9 +12,8 @@ export async function GET() {
 }
 
 export async function PATCH(req: NextRequest) {
-  if (!(await requireAdmin())) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
+  const guard = await requireAdmin();
+  if (guard.deny) return guard.deny;
 
   let body: Partial<AppSettings>;
   try {

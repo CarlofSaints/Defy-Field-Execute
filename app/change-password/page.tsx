@@ -34,7 +34,15 @@ export default function ChangePasswordPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password: newPw, forcePasswordChange: false }),
       });
-      if (!res.ok) { setError('Failed to update password'); return; }
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        // A 409 here means an earlier user change has not gone live yet.
+        // Saving on top of it would wipe that change, so the API refuses.
+        setError(res.status === 409
+          ? `${data.error || 'A recent change is still going live.'} Please try again in a minute.`
+          : data.error || 'Failed to update password');
+        return;
+      }
 
       const raw = localStorage.getItem('dfe_session');
       if (raw) {

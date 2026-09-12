@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { loadUsers } from '@/lib/userData';
 import { sendWelcomeEmail, sendPasswordResetEmail } from '@/lib/email';
+import { requireAdmin } from '@/lib/apiAuth';
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  // This route emails somebody their password in plain text. Admin only.
+  const guard = await requireAdmin();
+  if (guard.deny) return guard.deny;
+
   const { id } = await params;
   // name + email can be passed directly (avoids cross-instance lookup race on Vercel)
   const { plainPassword, type, name: bodyName, email: bodyEmail } = await req.json();

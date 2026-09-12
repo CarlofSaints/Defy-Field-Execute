@@ -18,6 +18,50 @@ interface User {
 
 type Toast = { message: string; type: 'success' | 'error' };
 
+// Mirrors lib/deployState.ts
+interface DeployState {
+  pending: boolean;
+  building: boolean;
+  unknown: boolean;
+  savedAt: string | null;
+  builtAt: string | null;
+  message: string;
+}
+
+// Shown whenever a saved user change has not reached the running app yet.
+// While it is up every user form on this page is locked, because a second write
+// would be built on the stale list and would wipe the change already saved.
+function PendingBanner({ state, onDeploy, deploying }: {
+  state: DeployState; onDeploy: () => void; deploying: boolean;
+}) {
+  const amber = state.building || state.pending;
+  return (
+    <div className={`rounded-xl px-5 py-4 border flex flex-col sm:flex-row sm:items-center gap-3
+      ${amber ? 'bg-amber-50 border-amber-200' : 'bg-red-50 border-red-200'}`}>
+      <div className="flex items-start gap-3 flex-1">
+        {state.building && (
+          <span className="mt-0.5 h-4 w-4 rounded-full border-2 border-amber-500 border-t-transparent animate-spin shrink-0" />
+        )}
+        <div>
+          <p className="text-sm font-semibold text-gray-900">
+            {state.building ? 'Going live now' : state.unknown ? 'Cannot confirm the user list is live' : 'Waiting to go live'}
+          </p>
+          <p className="text-xs text-gray-700 mt-0.5">{state.message}</p>
+          <p className="text-xs text-gray-500 mt-1">
+            Adding, editing and deleting users is paused until this finishes. This page unlocks on its own.
+          </p>
+        </div>
+      </div>
+      {!state.building && (
+        <button onClick={onDeploy} disabled={deploying}
+          className="shrink-0 bg-gray-900 hover:bg-black disabled:opacity-50 text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors">
+          {deploying ? 'Starting…' : 'Deploy now'}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function Toast({ toast, onClose }: { toast: Toast; onClose: () => void }) {
   useEffect(() => {
     const t = setTimeout(onClose, 4000);
@@ -35,6 +79,9 @@ export default function AdminUsersPage() {
   const { session, loading, logout } = useAuth(true);
   const [users, setUsers] = useState<User[]>([]);
   const [toast, setToast] = useState<Toast | null>(null);
+  const [deploy, setDeploy] = useState<DeployState | null>(null);
+  const [deploying, setDeploying] = useState(false);
+  const [sessionExpired, setSessionExpired] = useState(false);
 
   // Add user form
   const [addName, setAddName] = useState('');
@@ -65,10 +112,51 @@ export default function AdminUsersPage() {
 
   async function loadUsers() {
     const res = await fetch('/api/users');
+    // The API is now gated server-side. Without this an expired session would
+    // come back 401 and render as "no users", which reads as data loss.
+    if (res.status === 401 || res.status === 403) { setSessionExpired(true); return; }
     if (res.ok) setUsers(await res.json());
   }
 
-  useEffect(() => { if (session) loadUsers(); }, [session]);
+  async function refreshDeploy(): Promise<DeployState | null> {
+    const res = await fetch('/api/deploy-state');
+    if (res.status === 401 || res.status === 403) { setSessionExpired(true); return null; }
+    if (!res.ok) return null;
+    const state: DeployState = await res.json();
+    setDeploy(state);
+    return state;
+  }
+
+  useEffect(() => { if (session) { loadUsers(); refreshDeploy(); } }, [session]);
+
+  // While a change is waiting to go live, poll until the new build is serving,
+  // then unlock and pull the now-live list.
+  const waiting = !!deploy && (deploy.pending || deploy.unknown);
+  useEffect(() => {
+    if (!session || !waiting) return;
+    const t = setInterval(async () => {
+      const state = await refreshDeploy();
+      if (state && !state.pending && !state.unknown) {
+        loadUsers();
+        notify('Changes are live. You can add or edit users again.');
+      }
+    }, 10000);
+    return () => clearInterval(t);
+  }, [session, waiting]);
+
+  async function handleDeployNow() {
+    setDeploying(true);
+    try {
+      const res = await fetch('/api/deploy-state', { method: 'POST' });
+      if (res.ok) { notify('Deploy started. This page unlocks when it finishes.'); refreshDeploy(); }
+      else {
+        const data = await res.json().catch(() => ({}));
+        notify(data.error || 'Could not start the deploy', 'error');
+      }
+    } finally {
+      setDeploying(false);
+    }
+  }
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -80,8 +168,15 @@ export default function AdminUsersPage() {
         body: JSON.stringify({ name: addName, email: addEmail, password: addPw, isAdmin: addAdmin, forcePasswordChange: addForcePwChange, notifyRunSuccess: addNotifySuccess, notifyRunError: addNotifyError }),
       });
       const data = await res.json();
-      if (!res.ok) { notify(data.error || 'Failed to create user', 'error'); return; }
+      if (!res.ok) {
+        // 409 with a deployState means an earlier change is still going live.
+        if (data.deployState) setDeploy(data.deployState);
+        notify(data.error || 'Failed to create user', 'error');
+        return;
+      }
 
+      // Saved for real (the API only returns 201 once the store took the
+      // write), so the welcome email is now safe to send.
       if (sendWelcome) {
         await fetch(`/api/users/${data.id}/notify`, {
           method: 'POST',
@@ -89,8 +184,20 @@ export default function AdminUsersPage() {
           body: JSON.stringify({ plainPassword: addPw, type: 'welcome', name: addName, email: addEmail }),
         });
       }
-      notify(`User ${addName} created${sendWelcome ? ' — welcome email sent' : ''}`);
+      notify(`User ${addName} created${sendWelcome ? ' — welcome email sent' : ''}. Going live now.`);
       setAddName(''); setAddEmail(''); setAddPw(''); setAddAdmin(false); setAddForcePwChange(true); setSendWelcome(true); setAddNotifySuccess(false); setAddNotifyError(false);
+      // Lock the forms straight away rather than waiting for the next poll.
+      setDeploy({
+        pending: true,
+        building: data.deploy?.triggered === true,
+        unknown: false,
+        savedAt: new Date().toISOString(),
+        builtAt: null,
+        message: data.deploy?.triggered
+          ? `${addName} is saved and the deploy that makes them live has started.`
+          : `${addName} is saved but the deploy did not start automatically${data.deploy?.error ? ` (${data.deploy.error})` : ''}. Use Deploy now.`,
+      });
+      refreshDeploy();
       loadUsers();
     } finally {
       setAddLoading(false);
@@ -122,7 +229,13 @@ export default function AdminUsersPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      if (!res.ok) { notify('Failed to update user', 'error'); return; }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        if (err.deployState) setDeploy(err.deployState);
+        notify(err.error || 'Failed to update user', 'error');
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
 
       if (editPw && sendReset) {
         await fetch(`/api/users/${editUser.id}/notify`, {
@@ -131,8 +244,19 @@ export default function AdminUsersPage() {
           body: JSON.stringify({ plainPassword: editPw, type: 'reset', name: editName, email: editEmail }),
         });
       }
-      notify(`User updated${editPw && sendReset ? ' — reset email sent' : ''}`);
+      notify(`User updated${editPw && sendReset ? ' — reset email sent' : ''}. Going live now.`);
       setEditUser(null);
+      setDeploy({
+        pending: true,
+        building: data.deploy?.triggered === true,
+        unknown: false,
+        savedAt: new Date().toISOString(),
+        builtAt: null,
+        message: data.deploy?.triggered
+          ? 'The change is saved and the deploy that makes it live has started.'
+          : `The change is saved but the deploy did not start automatically${data.deploy?.error ? ` (${data.deploy.error})` : ''}. Use Deploy now.`,
+      });
+      refreshDeploy();
       loadUsers();
     } finally {
       setEditLoading(false);
@@ -142,11 +266,49 @@ export default function AdminUsersPage() {
   async function handleDelete(user: User) {
     if (!confirm(`Delete user ${user.name}? This cannot be undone.`)) return;
     const res = await fetch(`/api/users/${user.id}`, { method: 'DELETE' });
-    if (res.ok) { notify('User deleted'); loadUsers(); }
-    else notify('Failed to delete user', 'error');
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      notify('User deleted. Going live now.');
+      setDeploy({
+        pending: true,
+        building: data.deploy?.triggered === true,
+        unknown: false,
+        savedAt: new Date().toISOString(),
+        builtAt: null,
+        message: data.deploy?.triggered
+          ? `${user.name} is deleted and the deploy that makes it live has started.`
+          : 'The delete is saved but the deploy did not start automatically. Use Deploy now.',
+      });
+      refreshDeploy();
+      loadUsers();
+    } else {
+      if (data.deployState) setDeploy(data.deployState);
+      notify(data.error || 'Failed to delete user', 'error');
+    }
   }
 
+  // Every user write rebuilds the whole list from a read, so while a previous
+  // write is still going live all of them must stay shut.
+  const locked = !!deploy && (deploy.pending || deploy.unknown);
+
   if (loading || !session) return null;
+
+  if (sessionExpired) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-4 bg-gray-50">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-8 max-w-sm text-center">
+          <h1 className="text-base font-bold text-gray-900">Your session has expired</h1>
+          <p className="text-sm text-gray-600 mt-2">
+            Sign in again to manage users. Nothing has been lost.
+          </p>
+          <button onClick={logout}
+            className="mt-5 bg-[#E31837] hover:bg-[#c01430] text-white text-sm font-bold px-5 py-2 rounded-lg transition-colors">
+            Sign in again
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen" style={{ backgroundImage: "url('/defy logo grey.png')", backgroundSize: '160px', backgroundRepeat: 'repeat', backgroundColor: 'rgb(252,252,252)', backgroundBlendMode: 'luminosity' }}>
@@ -157,6 +319,10 @@ export default function AdminUsersPage() {
         <div className="bg-white rounded-xl shadow-sm border-l-4 border-[#E31837] px-6 py-4 flex items-center gap-3">
           <h1 className="text-xl font-bold text-gray-900">User Management</h1>
         </div>
+
+        {locked && deploy && (
+          <PendingBanner state={deploy} onDeploy={handleDeployNow} deploying={deploying} />
+        )}
 
         {/* Add User */}
         <section className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
@@ -214,9 +380,9 @@ export default function AdminUsersPage() {
               </div>
             </div>
             <div className="sm:col-span-2">
-              <button type="submit" disabled={addLoading}
-                className="bg-[#E31837] hover:bg-[#c01430] disabled:opacity-50 text-white text-sm font-bold px-6 py-2 rounded-lg transition-colors">
-                {addLoading ? 'Creating…' : 'Create User'}
+              <button type="submit" disabled={addLoading || locked}
+                className="bg-[#E31837] hover:bg-[#c01430] disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-bold px-6 py-2 rounded-lg transition-colors">
+                {addLoading ? 'Creating…' : locked ? 'Waiting for the last change to go live…' : 'Create User'}
               </button>
             </div>
           </form>
@@ -265,10 +431,10 @@ export default function AdminUsersPage() {
                     </td>
                     <td className="px-6 py-3">
                       <div className="flex gap-2 justify-end">
-                        <button onClick={() => openEdit(u)}
-                          className="text-xs text-blue-600 hover:text-blue-800 font-medium">Edit</button>
-                        <button onClick={() => handleDelete(u)}
-                          className="text-xs text-red-500 hover:text-red-700 font-medium">Delete</button>
+                        <button onClick={() => openEdit(u)} disabled={locked}
+                          className="text-xs text-blue-600 hover:text-blue-800 font-medium disabled:text-gray-300 disabled:cursor-not-allowed">Edit</button>
+                        <button onClick={() => handleDelete(u)} disabled={locked}
+                          className="text-xs text-red-500 hover:text-red-700 font-medium disabled:text-gray-300 disabled:cursor-not-allowed">Delete</button>
                       </div>
                     </td>
                   </tr>
@@ -331,9 +497,9 @@ export default function AdminUsersPage() {
                 )}
               </div>
               <div className="flex gap-3 pt-2">
-                <button type="submit" disabled={editLoading}
-                  className="bg-[#E31837] hover:bg-[#c01430] disabled:opacity-50 text-white text-sm font-bold px-5 py-2 rounded-lg transition-colors">
-                  {editLoading ? 'Saving…' : 'Save Changes'}
+                <button type="submit" disabled={editLoading || locked}
+                  className="bg-[#E31837] hover:bg-[#c01430] disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-bold px-5 py-2 rounded-lg transition-colors">
+                  {editLoading ? 'Saving…' : locked ? 'Waiting to go live…' : 'Save Changes'}
                 </button>
                 <button type="button" onClick={() => setEditUser(null)}
                   className="text-sm text-gray-600 hover:text-gray-900 px-4 py-2 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors">

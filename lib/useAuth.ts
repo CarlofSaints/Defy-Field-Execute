@@ -38,7 +38,11 @@ export function useAuth(requireAdmin = false) {
 
   function logout() {
     localStorage.removeItem('dfe_session');
-    router.push('/login');
+    // The server session is an httpOnly cookie, so clearing localStorage alone
+    // would leave the API still treating this browser as signed in.
+    fetch('/api/auth/logout', { method: 'POST' })
+      .catch(() => {})
+      .finally(() => router.push('/login'));
   }
 
   return { session, loading, logout };

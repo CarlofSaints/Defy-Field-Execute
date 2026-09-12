@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { loadUsers } from '@/lib/userData';
+import { createSessionCookie, sessionCookieOptions, SESSION_COOKIE } from '@/lib/session';
 
 export async function POST(req: NextRequest) {
   const { email, password } = await req.json();
@@ -28,11 +29,19 @@ export async function POST(req: NextRequest) {
   // firstLoginAt cannot be tracked correctly until the user store moves to a
   // runtime store (Blob) that the running deployment reads live.
 
-  return NextResponse.json({
+  const res = NextResponse.json({
     id: user.id,
     name: user.name,
     email: user.email,
     isAdmin: user.isAdmin,
     forcePasswordChange: user.forcePasswordChange,
   });
+
+  // The API routes need a session they can actually trust. The client keeps its
+  // own copy in localStorage for rendering; this httpOnly signed cookie is what
+  // the server checks. See lib/session.ts.
+  const token = createSessionCookie(user);
+  if (token) res.cookies.set(SESSION_COOKIE, token, sessionCookieOptions);
+
+  return res;
 }

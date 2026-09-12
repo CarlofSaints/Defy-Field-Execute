@@ -56,13 +56,17 @@ export async function loadUsers(): Promise<User[]> {
   return [];
 }
 
-export async function saveUsers(users: User[]): Promise<void> {
+// Returns true only when the list was actually persisted. The old signature
+// was void and every failure path merely console.error'd, so a caller could
+// return 201 "user created" and send the welcome email when nothing had been
+// written at all. Callers that change users MUST check this.
+export async function saveUsers(users: User[]): Promise<boolean> {
   // Never overwrite the stored list with an empty one — that would lock everyone
   // out. Treat an empty save as a no-op. Also never throw: a save failure must
   // not break login (the auth route awaits this).
   if (users.length === 0) {
     console.error('[userData] refusing to save an empty user list');
-    return;
+    return false;
   }
 
   // On Vercel the DFE_USERS_JSON env var is the source of truth that loadUsers
@@ -72,8 +76,7 @@ export async function saveUsers(users: User[]): Promise<void> {
   // never updated — so newly created users and password changes silently
   // vanished. On Vercel we must go straight to the env-var API.
   if (process.env.VERCEL) {
-    await saveUsersToEnv(users);
-    return;
+    return await saveUsersToEnv(users);
   }
 
   // Local dev: write the file.
@@ -81,8 +84,10 @@ export async function saveUsers(users: User[]): Promise<void> {
     const dir = path.dirname(FILE);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(FILE, JSON.stringify(users, null, 2));
+    return true;
   } catch (err) {
     console.error('[userData] local file save failed:', err);
+    return false;
   }
 }
 
@@ -90,11 +95,11 @@ export async function saveUsers(users: User[]): Promise<void> {
 // API. NOTE: env-var changes only take effect on the *next* deployment — the
 // running functions keep the value baked in at deploy time. A create/reset done
 // through the app therefore needs a redeploy before it goes live.
-async function saveUsersToEnv(users: User[]): Promise<void> {
+async function saveUsersToEnv(users: User[]): Promise<boolean> {
   const token = process.env.VERCEL_TOKEN;
   if (!token) {
     console.error('[userData] VERCEL_TOKEN missing — cannot persist users');
-    return;
+    return false;
   }
   try {
     const listRes = await fetch(`https://api.vercel.com/v9/projects/${PROJECT_ID}/env`, {
@@ -102,13 +107,13 @@ async function saveUsersToEnv(users: User[]): Promise<void> {
     });
     if (!listRes.ok) {
       console.error('[userData] env list failed:', listRes.status);
-      return;
+      return false;
     }
     const { envs } = await listRes.json() as { envs: { id: string; key: string }[] };
     const envRecord = envs.find(e => e.key === VERCEL_KEY);
     if (!envRecord) {
       console.error('[userData] DFE_USERS_JSON env record not found');
-      return;
+      return false;
     }
     const patchRes = await fetch(`https://api.vercel.com/v9/projects/${PROJECT_ID}/env/${envRecord.id}`, {
       method: 'PATCH',
@@ -117,8 +122,11 @@ async function saveUsersToEnv(users: User[]): Promise<void> {
     });
     if (!patchRes.ok) {
       console.error('[userData] env patch failed:', patchRes.status);
+      return false;
     }
+    return true;
   } catch (err) {
     console.error('[userData] env-var save failed:', err);
+    return false;
   }
 }
