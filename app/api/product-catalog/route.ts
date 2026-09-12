@@ -6,13 +6,20 @@ import {
   deleteProductCatalog,
   normalizeCode,
 } from '@/lib/productCatalogData';
+import { requireAdmin } from '@/lib/apiAuth';
 
 export async function GET() {
+  const guard = await requireAdmin();
+  if (guard.deny) return guard.deny;
+
   const catalog = await loadProductCatalog();
   return NextResponse.json({ count: catalog?.count ?? 0 });
 }
 
 export async function POST(req: NextRequest) {
+  const guard = await requireAdmin();
+  if (guard.deny) return guard.deny;
+
   let formData: FormData;
   try {
     formData = await req.formData();
@@ -78,6 +85,9 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE() {
+  const guard = await requireAdmin();
+  if (guard.deny) return guard.deny;
+
   await deleteProductCatalog();
   return NextResponse.json({ ok: true });
 }

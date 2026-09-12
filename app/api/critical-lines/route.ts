@@ -6,13 +6,20 @@ import {
   type CriticalLinesConfig,
   type CriticalLineEntry,
 } from '@/lib/criticalLinesData';
+import { requireAdmin } from '@/lib/apiAuth';
 
 export async function GET() {
+  const guard = await requireAdmin();
+  if (guard.deny) return guard.deny;
+
   const configs = await loadCriticalLines();
   return NextResponse.json(configs);
 }
 
 export async function POST(req: NextRequest) {
+  const guard = await requireAdmin();
+  if (guard.deny) return guard.deny;
+
   let formData: FormData;
   try {
     formData = await req.formData();
@@ -85,6 +92,9 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const guard = await requireAdmin();
+  if (guard.deny) return guard.deny;
+
   const { brand, channel } = await req.json() as { brand?: string; channel?: string };
   if (!brand || !channel) {
     return NextResponse.json({ error: 'brand and channel are required' }, { status: 400 });

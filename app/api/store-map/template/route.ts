@@ -1,9 +1,15 @@
 import { NextResponse } from 'next/server';
 import * as XLSX from 'xlsx';
+import { requireAdmin } from '@/lib/apiAuth';
 
 // Returns a blank Store Mapping control-file template with the expected headers
 // and a couple of example rows, so users know exactly what to fill in.
+// Linked with a plain <a href> from the admin page. A cookie is sent on a
+// same-origin navigation, so gating this does not break the download.
 export async function GET() {
+  const guard = await requireAdmin();
+  if (guard.deny) return guard.deny;
+
   const rows: (string)[][] = [
     ['STORE NAME', 'STORE CODE', 'PROVINCE'],
     ['MAKRO WOODMEAD', 'M123', 'GAUTENG'],

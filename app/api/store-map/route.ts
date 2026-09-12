@@ -1,13 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as XLSX from 'xlsx';
 import { loadStoreMap, saveStoreMap, StoreMapEntry } from '@/lib/storeMapData';
+import { requireAdmin } from '@/lib/apiAuth';
 
 export async function GET() {
+  const guard = await requireAdmin();
+  if (guard.deny) return guard.deny;
+
   const map = await loadStoreMap();
   return NextResponse.json({ count: map.length, entries: map });
 }
 
 export async function POST(req: NextRequest) {
+  const guard = await requireAdmin();
+  if (guard.deny) return guard.deny;
+
   let formData: FormData;
   try {
     formData = await req.formData();

@@ -7,6 +7,9 @@ import { requireAdmin } from '@/lib/apiAuth';
 // this PATCH was a permanent 403. It now uses the shared guard in lib/apiAuth.
 
 export async function GET() {
+  const guard = await requireAdmin();
+  if (guard.deny) return guard.deny;
+
   const settings = await loadAppSettings();
   return NextResponse.json(settings);
 }

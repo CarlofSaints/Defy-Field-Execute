@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { loadReports, saveReports } from '@/lib/reportData';
+import { requireAdmin } from '@/lib/apiAuth';
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await requireAdmin();
+  if (guard.deny) return guard.deny;
+
   const { id } = await params;
   const updates = await req.json();
   const reports = await loadReports();
@@ -24,6 +28,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await requireAdmin();
+  if (guard.deny) return guard.deny;
+
   const { id } = await params;
   const reports = await loadReports();
   const idx = reports.findIndex(r => r.id === id);

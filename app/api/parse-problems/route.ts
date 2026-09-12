@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as XLSX from 'xlsx';
+import { requireUser } from '@/lib/apiAuth';
 
 // POST — accepts a Perigee red-flag Excel file, returns unique problem values
 // looked up by header name "WHAT IS THE PROBLEM?" (order-independent).
 export async function POST(req: NextRequest) {
+  const guard = await requireUser();
+  if (guard.deny) return guard.deny;
+
   let formData: FormData;
   try {
     formData = await req.formData();

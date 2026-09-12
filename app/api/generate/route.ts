@@ -13,6 +13,7 @@ import { loadStoreMap } from '@/lib/storeMapData';
 import { loadReports, DATA_FORMAT_LABELS } from '@/lib/reportData';
 import { addRunEntry } from '@/lib/runLogData';
 import { loadUsers } from '@/lib/userData';
+import { requireUser } from '@/lib/apiAuth';
 import { sendRunNotification, sendReportEmail } from '@/lib/email';
 import { buildDfeFolderPath, uploadToSharePoint } from '@/lib/sharepoint-dfe';
 import type { DfeBrand } from '@/lib/sharepoint-dfe';
@@ -100,6 +101,10 @@ function buildFilename(
 // ── Main route ────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
+  // Running a report is available to every signed-in user, not just admins.
+  const guard = await requireUser();
+  if (guard.deny) return guard.deny;
+
   let formData: FormData;
   try {
     formData = await req.formData();

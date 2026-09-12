@@ -13,6 +13,14 @@ const UNAUTHENTICATED = () =>
 const FORBIDDEN = () =>
   NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
+// Any signed-in user. Used by the routes the main page needs to work, which
+// every user reaches - listing reports, running one, parsing a problem file.
+export async function requireUser(): Promise<Guard> {
+  const user = await getSessionUser();
+  if (!user) return { deny: UNAUTHENTICATED() };
+  return { user };
+}
+
 export async function requireAdmin(): Promise<Guard> {
   const user = await getSessionUser();
   if (!user) return { deny: UNAUTHENTICATED() };
