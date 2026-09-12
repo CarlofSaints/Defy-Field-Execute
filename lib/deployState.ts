@@ -114,14 +114,34 @@ export async function getDeployState(): Promise<DeployState> {
   }
 }
 
+// The deployment to rebuild. VERCEL_DEPLOYMENT_ID is a system env var and is
+// only injected when the project exposes those, so fall back to looking up the
+// newest ready production deployment. Without the fallback both the automatic
+// trigger and the manual "Deploy now" button would fail on a project with
+// system variables turned off, which would leave an admin locked out of user
+// management with no way forward.
+async function currentDeploymentId(token: string): Promise<string | null> {
+  if (process.env.VERCEL_DEPLOYMENT_ID) return process.env.VERCEL_DEPLOYMENT_ID;
+  try {
+    const { deployments } = await vercelGet(
+      `/v6/deployments?projectId=${PROJECT_ID}&target=production&state=READY&limit=1`, token,
+    ) as { deployments: { uid?: string; id?: string }[] };
+    const newest = (deployments || [])[0];
+    return newest?.uid || newest?.id || null;
+  } catch (err) {
+    console.error('[deployState] could not find a deployment to rebuild:', err);
+    return null;
+  }
+}
+
 // Redeploy the currently-running production deployment. Same commit, rebuilt,
 // so it bakes in the current DFE_USERS_JSON. Returns an error string on failure.
 export async function triggerRedeploy(): Promise<{ ok: boolean; error?: string }> {
   const token = process.env.VERCEL_TOKEN;
   if (!token) return { ok: false, error: 'VERCEL_TOKEN is not set' };
 
-  const deploymentId = process.env.VERCEL_DEPLOYMENT_ID;
-  if (!deploymentId) return { ok: false, error: 'No deployment id available' };
+  const deploymentId = await currentDeploymentId(token);
+  if (!deploymentId) return { ok: false, error: 'Could not find a deployment to rebuild' };
 
   try {
     const res = await fetch(api('/v13/deployments?forceNew=1&skipAutoDetectionConfirmation=1'), {
