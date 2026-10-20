@@ -40,7 +40,8 @@ import * as XLSX from 'xlsx';
 import fs   from 'fs';
 import path from 'path';
 import { buildMenuSheet, applyHeaderStyle, applyDataStyle, addNavRow } from './build-menu';
-import { listFilesInSPFolder, downloadSPFileById } from '@/lib/graph-oj';
+import { listFilesInSPFolder } from '@/lib/graph-oj';
+import { urlToImageId, fetchPhoto } from './photo-source';
 import { loadAppSettings } from '@/lib/appSettings';
 import { parseSpPath }     from '@/lib/spUrlParser';
 
@@ -77,19 +78,6 @@ const RAW_IMAGE_COLS = [18, 19, 20, 21, 22];
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function s(row: (unknown)[], i: number): string {
   return String(row[i] ?? '').trim();
-}
-
-/**
- * Extract the Perigee image ID from a URL — the segment starting with "perigee-".
- * This matches the VBA ImageFilename() convention which extracts the token.
- *
- * e.g. "https://live.perigeeportal.co.za/.../perigee-1307447LTnKUCFZBrdtVk/NONE/NONE"
- *   →  "perigee-1307447LTnKUCFZBrdtVk"
- */
-function urlToImageId(url: string): string {
-  if (!url) return '';
-  const seg = url.split('/').find(s => s.toLowerCase().startsWith('perigee-'));
-  return seg ?? '';
 }
 
 function parseDdMmYyyy(d: string): Date | null {
@@ -216,10 +204,7 @@ export async function generateActivationReport(
 
   const fetched = await Promise.all(
     uniqueIds.map(async id => {
-      const key    = `${id}.jpg`.toLowerCase();
-      const itemId = spFiles.get(key);
-      if (!itemId) return null;
-      return downloadSPFileById(itemId);
+      return fetchPhoto(id, spFiles);
     })
   );
   const imageBuffers = new Map<string, Buffer>();

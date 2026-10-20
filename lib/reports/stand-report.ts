@@ -21,7 +21,8 @@ import * as XLSX from 'xlsx';
 import sharp from 'sharp';
 import fs   from 'fs';
 import path from 'path';
-import { listFilesInSPFolder, downloadSPFileById } from '@/lib/graph-oj';
+import { listFilesInSPFolder } from '@/lib/graph-oj';
+import { urlToImageId, fetchPhoto } from './photo-source';
 import { loadAppSettings }    from '@/lib/appSettings';
 import { parseSpPath }        from '@/lib/spUrlParser';
 
@@ -94,14 +95,6 @@ function xmlEsc(s: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
-}
-
-function urlToImageId(url: string): string {
-  if (!url) return '';
-  // Perigee URL format: .../get_image/{imageId}/NONE/NONE
-  // The image ID is the segment starting with "perigee-", not the last segment.
-  const seg = url.split('/').find(s => s.toLowerCase().startsWith('perigee-'));
-  return seg ?? '';
 }
 
 function parseDdMmYyyy(date: string): Date | null {
@@ -543,16 +536,13 @@ export async function generateStandReport(
 
   const fetched = await Promise.all(
     allIds.map(async id => {
-      const key    = `${id}.jpg`.toLowerCase();
-      const itemId = spFiles.get(key);
-      if (!itemId) return null;
-      const raw = await downloadSPFileById(itemId);
+      const raw = await fetchPhoto(id, spFiles);
       if (!raw) return null;
       // Auto-rotate from EXIF, resize, compress
       try {
         return await processImage(raw);
       } catch (e) {
-        console.warn(`[stand-report] sharp failed for ${key}, using raw:`, e);
+        console.warn(`[stand-report] sharp failed for ${id}, using raw:`, e);
         return { buffer: raw, width: 0, height: 0 } as ProcessedImage;
       }
     })
