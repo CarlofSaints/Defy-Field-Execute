@@ -7,14 +7,14 @@ import { downloadSPFileById } from '@/lib/graph-oj';
  */
 export function urlToImageId(url: string): string {
   if (!url) return '';
-  if (url.startsWith('https://www.fieldgoose.com/')) return url;
+  if (/^https?:\/\/www\.fieldgoose\.com\//.test(url)) return url;
   const seg = url.split('/').find(s => s.toLowerCase().startsWith('perigee-'));
   return seg ?? '';
 }
 
 /** Field Goose links straight from the web, Perigee ids from the VBA-saved SharePoint file. */
 export async function fetchPhoto(id: string, spFiles: Map<string, string>): Promise<Buffer | null> {
-  if (id.startsWith('https://')) {
+  if (/^https?:\/\//.test(id)) {
     try {
       const res = await fetch(id);
       return res.ok ? Buffer.from(await res.arrayBuffer()) : null;
