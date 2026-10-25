@@ -9,6 +9,7 @@ import { loadMonthUploads, archiveUpload } from '@/lib/uploadArchive';
 import { generateActivationReport, type ActivationArchiveRow } from '@/lib/reports/activation-report';
 import { generateServiceCallReport, type ServiceCallArchiveRow } from '@/lib/reports/service-call-report';
 import { analyzeChannelMismatch, filterByChannel } from '@/lib/reports/channel-check';
+import { normaliseUploadDates } from '@/lib/reports/normalise-dates';
 import { loadStoreMap } from '@/lib/storeMapData';
 import { loadReports, DATA_FORMAT_LABELS } from '@/lib/reportData';
 import { addRunEntry } from '@/lib/runLogData';
@@ -127,7 +128,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'file, brand and reportId are required' }, { status: 400 });
   }
 
-  let fileBuffer  = Buffer.from(await file.arrayBuffer());
+  let fileBuffer  = normaliseUploadDates(Buffer.from(await file.arrayBuffer()));
   const rawFilename = file.name;
   const storeMap    = await loadStoreMap();
 
