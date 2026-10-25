@@ -486,7 +486,8 @@ export async function generateMakroStockCount(
   let reportWeek = 1;
   let reportYear = new Date().getFullYear();
   if (dates.length > 0) {
-    const latest = [...dates].sort().at(-1)!;
+    // Sort as dates: a plain string sort of DD/MM/YYYY picks 30/09 over 02/10
+    const latest = [...dates].sort((a, b) => perigeeToDate(a).getTime() - perigeeToDate(b).getTime()).at(-1)!;
     const r = getISOWeek(latest);
     reportWeek = r.week;
     reportYear = r.year;
