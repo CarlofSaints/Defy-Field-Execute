@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs';
+import { baseCols } from './base-cols';
 import * as XLSX from 'xlsx';
 import path from 'path';
 import fs from 'fs';
@@ -153,10 +154,11 @@ export async function analyzeStockCount(fileBuffer: Buffer): Promise<StockCountA
   const headers  = rawData[0] as (string | null)[];
   const rawRows  = rawData.slice(1);
   const warnings: string[] = [];
+  const col = baseCols(headers);
 
   // 1. Count rows where the rep did not complete store check-in
   const blankStoreCount = rawRows.filter(row =>
-    !String(row[7] ?? '').trim() && !String(row[6] ?? '').trim()
+    !String(row[col.code] ?? '').trim() && !String(row[col.store] ?? '').trim()
   ).length;
   if (blankStoreCount > 0) {
     warnings.push(
@@ -286,17 +288,18 @@ export async function generateMakroStockCount(
 
   const headers = rawData[0] as (string | null)[];
   const rawRows = rawData.slice(1);
+  const col = baseCols(headers);
 
-  // ── Deduplicate: same store → keep most recent submission by DATE (col J = index 9) ──
+  // ── Deduplicate: same store → keep most recent submission by DATE ──
   // Some reps fill in the form multiple times for the same store in the same period.
   const storeLatest = new Map<string, { row: typeof rawRows[0]; dateMs: number }>();
   for (let ri = 0; ri < rawRows.length; ri++) {
     const row = rawRows[ri];
-    const storeCode = String(row[7] ?? '').trim();
-    const storeName = String(row[6] ?? '').trim();
+    const storeCode = String(row[col.code] ?? '').trim();
+    const storeName = String(row[col.store] ?? '').trim();
     // Rows with no store check-in get a unique key so they're included as UNKNOWN
     const key = storeCode || storeName || `__NOSTORE_${ri}`;
-    const dateMs = perigeeToDate(String(row[9] ?? '')).getTime();
+    const dateMs = perigeeToDate(String(row[col.date] ?? '')).getTime();
     if (!storeLatest.has(key) || dateMs > storeLatest.get(key)!.dateMs) {
       storeLatest.set(key, { row, dateMs });
     }
@@ -307,16 +310,15 @@ export async function generateMakroStockCount(
   const db: DatabaseRow[] = [];
   const dates: string[] = [];
 
-  // Shared per-row metadata extractor (column positions are identical in both
-  // the old and new Perigee exports).
+  // Shared per-row metadata extractor
   const rowMeta = (row: (string | number | null)[]) => {
-    const repFirst  = String(row[2] ?? '').trim();
-    const repLast   = String(row[3] ?? '').trim();
+    const repFirst  = String(row[col.first] ?? '').trim();
+    const repLast   = String(row[col.last] ?? '').trim();
     const repName   = [repFirst, repLast].filter(Boolean).join(' ') || 'UNKNOWN';
-    const storeName = String(row[6] ?? '').trim() || 'UNKNOWN';
-    const storeCode = String(row[7] ?? '').trim();
-    const dateStr   = String(row[9] ?? '').trim();
-    const rawProvince = String(row[8] ?? '').trim();
+    const storeName = String(row[col.store] ?? '').trim() || 'UNKNOWN';
+    const storeCode = String(row[col.code] ?? '').trim();
+    const dateStr   = String(row[col.date] ?? '').trim();
+    const rawProvince = String(row[col.province] ?? '').trim();
     const province  = lookupProvince(storeCode, storeName, storeMap) || rawProvince || 'UNKNOWN';
     let weekLabel = '';
     if (dateStr && dateStr.includes('/')) weekLabel = `WEEK${String(getISOWeek(dateStr).week).padStart(2, '0')}`;

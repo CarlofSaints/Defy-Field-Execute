@@ -22,6 +22,7 @@ import sharp from 'sharp';
 import fs   from 'fs';
 import path from 'path';
 import { listFilesInSPFolder } from '@/lib/graph-oj';
+import { baseCols } from './base-cols';
 import { urlToImageId, fetchPhoto } from './photo-source';
 import { loadAppSettings }    from '@/lib/appSettings';
 import { parseSpPath }        from '@/lib/spUrlParser';
@@ -462,6 +463,7 @@ export async function generateStandReport(
   if (rawData.length < 2) throw new Error('No data rows found in uploaded file.');
 
   // ── 2. Map rows ─────────────────────────────────────────────────────────────
+  const col = baseCols(rawData[0]);
   const rows = rawData.slice(1).map(raw => {
     const r = raw as (string | number | null)[];
     const imageUrls: string[] = [];
@@ -470,9 +472,9 @@ export async function generateStandReport(
       if (s.startsWith('http')) imageUrls.push(s);
     });
     return {
-      repName:   [String(r[2] ?? '').trim(), String(r[3] ?? '').trim()].filter(Boolean).join(' ') || 'UNKNOWN',
-      store:     String(r[6] ?? '').trim() || 'UNKNOWN',
-      date:      String(r[9] ?? '').trim(),
+      repName:   [String(r[col.first] ?? '').trim(), String(r[col.last] ?? '').trim()].filter(Boolean).join(' ') || 'UNKNOWN',
+      store:     String(r[col.store] ?? '').trim() || 'UNKNOWN',
+      date:      String(r[col.date] ?? '').trim(),
       imageUrls,
       imageIds:  imageUrls.map(urlToImageId),
     };
