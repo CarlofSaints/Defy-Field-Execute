@@ -116,3 +116,6 @@ These are NOT related to the stand report bug:
 
 ### App
 - `app/` — Next.js app directory with pages for reports, settings, etc.
+
+## Atomic Marketing Hub sign-in (26 Oct 2026)
+`GET /sso/callback` (`app/sso/callback/route.ts`, `lib/hubSso.ts`): verifies the Hub token with `AM_SSO_SECRET`, needs module `defy-field-execute`, signs in the EXISTING user matched by email (never creates one), sets the `dfe_session` cookie and writes the localStorage copy via a tiny page. Needs `AM_SSO_SECRET` on Vercel (same value as the Hub). `lib/hubSso.ts` is identical in every AM module.
