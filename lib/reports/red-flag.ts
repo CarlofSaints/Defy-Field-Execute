@@ -40,6 +40,7 @@ import fs   from 'fs';
 import path from 'path';
 import { buildMenuSheet, applyHeaderStyle, applyDataStyle, addNavRow } from './build-menu';
 import { listFilesInSPFolder } from '@/lib/graph-oj';
+import { baseCols } from './base-cols';
 import { urlToImageId, fetchPhoto } from './photo-source';
 import { loadAppSettings } from '@/lib/appSettings';
 import { parseSpPath } from '@/lib/spUrlParser';
@@ -176,14 +177,15 @@ export async function generateRedFlag(
   console.log(`[red-flag/${label}] Header map: problem=[${problemCols}] model=[${modelCols}] shopfitting=[${shopfittingCols}] picture=[${pictureCols}] escalate=[${escalateCols}]`);
 
   // ── 2. Map rows to typed objects ───────────────────────────────────────────
+  const col = baseCols(headerRow);
   const rows: RedFlagRow[] = rawRows.map(row => {
     const imageUrl = firstNonEmpty(row, pictureCols);
     // Prefer model number; fall back to shopfitting explanation for shopfitting rows
     const model = firstNonEmpty(row, modelCols) || firstNonEmpty(row, shopfittingCols);
     return {
-      repName:  [String(row[2] ?? '').trim(), String(row[3] ?? '').trim()].filter(Boolean).join(' ') || 'UNKNOWN',
-      store:    String(row[6] ?? '').trim() || String(row[7] ?? '').trim() || 'UNKNOWN',
-      date:     String(row[9] ?? '').trim(),
+      repName:  [String(row[col.first] ?? '').trim(), String(row[col.last] ?? '').trim()].filter(Boolean).join(' ') || 'UNKNOWN',
+      store:    String(row[col.store] ?? '').trim() || String(row[col.code] ?? '').trim() || 'UNKNOWN',
+      date:     String(row[col.date] ?? '').trim(),
       problem:  firstNonEmpty(row, problemCols),
       model,
       imageUrl,
