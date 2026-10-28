@@ -116,6 +116,7 @@ export async function generateActivationReport(
   fileBuffer: Buffer,
   brand: string,
   historicalRows?: ActivationArchiveRow[],
+  embedImages = false,  // false = photos stay links, keeps the file small
 ): Promise<{ buffer: Buffer; filename: string; rawDates: string[]; archiveRows: ActivationArchiveRow[] }> {
 
   // ── 1. Parse raw Perigee export ────────────────────────────────────────────
@@ -187,11 +188,11 @@ export async function generateActivationReport(
   const PICTURES_FOLDER = parseSpPath(rawPicturesPath);
 
   // Collect unique non-empty image IDs
-  const uniqueIds = [...new Set(rows.flatMap(r => r.imageIds).filter(Boolean))];
+  const uniqueIds = embedImages ? [...new Set(rows.flatMap(r => r.imageIds).filter(Boolean))] : [];
 
   // Recursively index all .jpg files in the pictures folder (including subfolders
   // created by older VBA versions) then fetch only the ones we need.
-  const spFiles = await listFilesInSPFolder(PICTURES_FOLDER);
+  const spFiles = embedImages ? await listFilesInSPFolder(PICTURES_FOLDER) : new Map<string, string>();
   console.log(
     `[activation-report] SP file index: ${spFiles.size} file(s) in "${PICTURES_FOLDER}" (incl. subfolders)`
   );

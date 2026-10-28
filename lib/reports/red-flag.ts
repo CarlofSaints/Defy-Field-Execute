@@ -151,6 +151,7 @@ export async function generateRedFlag(
   label:         'SALES' | 'MARKETING',
   problemFilter: string[],   // only rows whose problem is in this list
   historicalRows?: RedFlagArchiveRow[],
+  embedImages = false,  // false = the photo stays a link, keeps the file small
 ): Promise<{ buffer: Buffer; filename: string; rawDates: string[]; archiveRows: RedFlagArchiveRow[] }> {
 
   // ── 1. Parse raw Perigee export ────────────────────────────────────────────
@@ -232,11 +233,11 @@ export async function generateRedFlag(
   const PICTURES_FOLDER = parseSpPath(rawPicturesPath);
 
   // Collect unique image IDs across filtered rows
-  const uniqueIds = [...new Set(filteredRows.map(r => r.imageId).filter(Boolean))];
+  const uniqueIds = embedImages ? [...new Set(filteredRows.map(r => r.imageId).filter(Boolean))] : [];
 
   // Recursively index all .jpg files in the pictures folder (including subfolders
   // created by older VBA versions) then fetch only the ones we need.
-  const spFiles = await listFilesInSPFolder(PICTURES_FOLDER);
+  const spFiles = embedImages ? await listFilesInSPFolder(PICTURES_FOLDER) : new Map<string, string>();
   console.log(`[red-flag/${label}] SP file index: ${spFiles.size} file(s) in "${PICTURES_FOLDER}" (incl. subfolders)`);
 
   const fetched = await Promise.all(
