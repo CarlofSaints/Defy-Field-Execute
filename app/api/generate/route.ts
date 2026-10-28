@@ -120,6 +120,7 @@ export async function POST(req: NextRequest) {
   const userName        = (formData.get('userName') as string | null)?.trim() || 'Unknown';
   const userEmail       = (formData.get('userEmail') as string | null)?.trim() || '';
   const sendEmail       = formData.get('sendEmail') === 'true';
+  const embedImages     = formData.get('embedImages') === 'true';
   const additionalEmail = (formData.get('additionalEmail') as string | null)?.trim() || '';
   const confirmed       = formData.get('confirmed') === 'true';
   const channelAction   = (formData.get('channelAction') as string | null)?.trim() || '';
@@ -225,7 +226,7 @@ export async function POST(req: NextRequest) {
 
         // Generate Sales report
         if (salesProblems.length) {
-          const { buffer, rawDates, archiveRows: salesArchiveRows } = await generateRedFlag(fileBuffer, brand, 'SALES', salesProblems, historicalRfRows);
+          const { buffer, rawDates, archiveRows: salesArchiveRows } = await generateRedFlag(fileBuffer, brand, 'SALES', salesProblems, historicalRfRows, embedImages);
           const filename = buildFilename(brand, dataFormat, channel, rawDates, 'SALES');
           results.push({ excelBuffer: buffer, filename, rawDates, weekLabel: '', retailer: '', label: 'SALES' });
           await archiveUpload('red-flag', brand, currentMonthRf, salesArchiveRows).catch(e => {
@@ -234,7 +235,7 @@ export async function POST(req: NextRequest) {
         }
         // Generate Marketing report
         if (marketingProblems.length) {
-          const { buffer, rawDates, archiveRows: mktgArchiveRows } = await generateRedFlag(fileBuffer, brand, 'MARKETING', marketingProblems, historicalRfRows);
+          const { buffer, rawDates, archiveRows: mktgArchiveRows } = await generateRedFlag(fileBuffer, brand, 'MARKETING', marketingProblems, historicalRfRows, embedImages);
           const filename = buildFilename(brand, dataFormat, channel, rawDates, 'MARKETING');
           results.push({ excelBuffer: buffer, filename, rawDates, weekLabel: '', retailer: '', label: 'MARKETING' });
           await archiveUpload('red-flag', brand, currentMonthRf, mktgArchiveRows).catch(e => {
@@ -287,7 +288,7 @@ export async function POST(req: NextRequest) {
       case 'activation-report': {
         const currentMonthAr = new Date().toISOString().slice(0, 7);
         const historicalArRows = await loadMonthUploads<ActivationArchiveRow>('activation-report', brand, currentMonthAr);
-        const { buffer, rawDates, archiveRows: arArchiveRows } = await generateActivationReport(fileBuffer, brand, historicalArRows);
+        const { buffer, rawDates, archiveRows: arArchiveRows } = await generateActivationReport(fileBuffer, brand, historicalArRows, embedImages);
         const filename = buildFilename(brand, dataFormat, channel, rawDates);
         results.push({ excelBuffer: buffer, filename, rawDates, weekLabel: '', retailer: '', label: '' });
         await archiveUpload('activation-report', brand, currentMonthAr, arArchiveRows).catch(e => {

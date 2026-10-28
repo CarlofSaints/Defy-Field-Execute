@@ -307,6 +307,7 @@ export default function DashboardPage() {
   const [outputType,        setOutputType]        = useState<string>('Excel');
   const [file,              setFile]              = useState<File | null>(null);
   const [sendEmail,         setSendEmail]         = useState(false);
+  const [embedImages,       setEmbedImages]       = useState(false);
   const [additionalEmail,   setAdditionalEmail]   = useState('');
   const [generating,        setGenerating]        = useState(false);
   const [error,             setError]             = useState<string | null>(null);
@@ -334,6 +335,8 @@ export default function DashboardPage() {
 
   // Derived: is the selected report a red flag report?
   const isRedFlag = !!report && report.dataFormat === 'red-flag';
+  // Excel reports that carry photos (the stand report is a PPT and always embeds)
+  const hasExcelImages = isRedFlag || report?.dataFormat === 'activation-report';
 
   // Clear channel mismatch when file or report changes
   useEffect(() => {
@@ -419,6 +422,7 @@ export default function DashboardPage() {
     fd.append('userName',  session?.name  ?? '');
     fd.append('userEmail', session?.email ?? '');
     fd.append('sendEmail', sendEmail ? 'true' : 'false');
+    fd.append('embedImages', embedImages ? 'true' : 'false');
     if (sendEmail && additionalEmail) fd.append('additionalEmail', additionalEmail);
     if (confirmed) fd.append('confirmed', 'true');
     const effectiveChannelAction = channelActionOverride ?? channelAction;
@@ -541,6 +545,16 @@ export default function DashboardPage() {
               <TypePill key={t} label={t} selected={outputType === t} onClick={() => setOutputType(t)} />
             ))}
           </div>
+          {hasExcelImages && (
+            <div className="mt-4">
+              <p className="text-xs font-medium text-gray-600 uppercase tracking-wide mb-2">Photos</p>
+              <div className="flex flex-wrap gap-3">
+                <TypePill label="Only include link in file" selected={!embedImages} onClick={() => setEmbedImages(false)} />
+                <TypePill label="Embed images in Excel file" selected={embedImages} onClick={() => setEmbedImages(true)} />
+              </div>
+              {embedImages && <p className="text-xs text-gray-400 mt-2">Embedded photos make the file much bigger.</p>}
+            </div>
+          )}
         </div>
 
         {/* ── Step 4: Upload ───────────────────────────────────────────────── */}
